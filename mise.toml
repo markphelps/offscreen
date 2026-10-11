@@ -1,0 +1,25 @@
+[tools]
+go = "1.27.0"
+golangci-lint = "2.13.2"
+shellcheck = "0.11.0"
+goreleaser = "2.17.1"
+
+[tasks.build]
+description = "Build the client and daemon"
+run = "mkdir -p bin && go build -o bin/offscreen ./cmd/offscreen && go build -o bin/offscreend ./cmd/offscreend"
+
+[tasks.test]
+description = "Run Go tests"
+run = "go test ./..."
+
+[tasks.lint]
+description = "Lint Go code"
+run = "golangci-lint run ./..."
+
+[tasks.fmt]
+description = "Format Go code"
+run = "golangci-lint fmt ./..."
+
+[tasks."go:modernize"]
+description = "Apply modern Go idioms"
+run = "golangci-lint run --default=none -E modernize --fix ./..."

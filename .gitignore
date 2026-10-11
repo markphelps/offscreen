@@ -1,2 +1,5 @@
 docs
-mise.toml
+mise.local.toml
+.worktrees/
+bin/
+dist/
