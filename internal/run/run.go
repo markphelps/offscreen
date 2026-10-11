@@ -119,7 +119,7 @@ func Execute(ctx context.Context, o Options) (result Result) {
 	}
 	if spec.Prepare != "" {
 		cmd := exec.CommandContext(ctx, "/bin/bash", "-o", "pipefail", "-c", spec.Prepare) // #nosec G204 -- project-owned contract explicitly supplies a host shell command
-		cmd.Dir, cmd.Stdout, cmd.Stderr = spec.Root, o.Stdout, o.Stderr
+		cmd.Dir, cmd.Stdout, cmd.Stderr = spec.Root, o.Stderr, o.Stderr
 		if err := cmd.Run(); err != nil {
 			fail(fmt.Errorf("host prepare: %w", err))
 			return
