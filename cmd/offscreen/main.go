@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -11,13 +12,16 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+	"golang.org/x/sys/unix"
 
 	"github.com/markphelps/offscreen/internal/config"
 	"github.com/markphelps/offscreen/internal/image"
 	"github.com/markphelps/offscreen/internal/logging"
+	"github.com/markphelps/offscreen/internal/project"
+	"github.com/markphelps/offscreen/internal/run"
 )
 
-// CLI declares the public command surface. The implementation is added in later stages.
+// CLI declares the public command surface.
 type CLI struct {
 	LogLevel  string       `help:"Log level (debug, info, warn, error)." env:"OFFSCREEN_LOG_LEVEL" default:"info"`
 	Run       RunCmd       `cmd:"" help:"Run a project task or command."`
@@ -49,8 +53,48 @@ func (c *RunCmd) Run() error {
 	if !c.Direct && len(c.Args) != 1 {
 		return fmt.Errorf("run: supply one task, or use -- before a command; see offscreen run --help")
 	}
-	return notImplemented("run")
+	if c.Detach {
+		return errors.New("run --detach requires offscreend (not implemented yet)")
+	}
+	contract, err := project.Discover("", c.Worktree, c.Project)
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	request := run.Options{
+		Config: cfg, Contract: contract, Lane: project.Lane(c.Lane),
+		Timeout: c.Timeout, Keep: c.Keep,
+		Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr,
+	}
+	if c.Direct {
+		request.Argv = c.Args
+	} else {
+		request.Task = c.Args[0]
+	}
+	_, ttyErr := unix.IoctlGetTermios(int(os.Stdin.Fd()), unix.TIOCGETA)
+	request.TTY = ttyErr == nil
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	result := run.Execute(ctx, request)
+	if result.Err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, "offscreen run:", result.Err)
+	}
+	if result.Kept {
+		_, _ = fmt.Fprintln(os.Stderr, "VM kept for inspection: tart run", result.VM)
+	}
+	_, _ = fmt.Fprintf(os.Stderr, "job %s artifacts %s\n", result.ID, result.Artifacts)
+	if result.Code != 0 {
+		return runExit(result.Code)
+	}
+	return nil
 }
+
+type runExit int
+
+func (e runExit) Error() string { return fmt.Sprintf("job exited %d", e) }
 
 type StatusCmd struct{}
 
@@ -142,6 +186,9 @@ func execute(args []string) error {
 
 func main() {
 	if err := execute(os.Args[1:]); err != nil {
+		if status, ok := errors.AsType[runExit](err); ok {
+			os.Exit(int(status))
+		}
 		_, _ = os.Stderr.WriteString(err.Error() + "\n")
 		os.Exit(1)
 	}

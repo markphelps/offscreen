@@ -7,11 +7,11 @@ final class HelloUITests: XCTestCase {
 
         let status = app.staticTexts["statusLabel"]
         XCTAssertTrue(status.waitForExistence(timeout: 10))
-        XCTAssertEqual(status.label, "Ready")
+        XCTAssertEqual(status.value as? String, "Ready")
 
         let button = app.buttons["Change label"]
         XCTAssertTrue(button.exists)
         button.click()
-        XCTAssertEqual(status.label, "Changed")
+        XCTAssertEqual(status.value as? String, "Changed")
     }
 }
