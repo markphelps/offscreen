@@ -1,12 +1,56 @@
 package main
 
 import (
+	"encoding/json"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/stretchr/testify/require"
+
+	"github.com/markphelps/offscreen/internal/daemon"
 )
+
+func TestHostEnvironmentPreservesValuesContainingEquals(t *testing.T) {
+	require.Equal(t, map[string]string{"PATH": "/caller/bin", "FOO": "a=b=c"}, hostEnvironment([]string{"PATH=/caller/bin", "FOO=a=b=c", "malformed"}))
+}
+
+func TestRunSubmissionCapturesCallerEnvironment(t *testing.T) {
+	state, err := os.MkdirTemp("/tmp", "os-cli-")
+	require.NoError(t, err)
+	defer func() { _ = os.RemoveAll(state) }()
+	t.Setenv("OFFSCREEN_STATE_DIR", state)
+	t.Setenv("OFFSCREEN_CALLER_VALUE", "left=right")
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".offscreen.toml"), []byte("project = 'hello'\n"), 0o600))
+	listener, err := net.Listen("unix", filepath.Join(state, "offscreend.sock"))
+	require.NoError(t, err)
+	defer func() { _ = listener.Close() }()
+	received := make(chan daemon.Request, 1)
+	server := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req daemon.Request
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		received <- req
+		_ = json.NewEncoder(w).Encode(daemon.Job{ID: "fake", Artifacts: root})
+	})}
+	go func() { _ = server.Serve(listener) }()
+	defer func() { _ = server.Close() }()
+	require.NoError(t, (&RunCmd{Project: "hello", Args: []string{"test-ui"}, Worktree: root, Detach: true}).Run())
+	select {
+	case req := <-received:
+		require.Equal(t, "left=right", req.HostEnv["OFFSCREEN_CALLER_VALUE"])
+		require.Equal(t, "test-ui", req.Task)
+	case <-time.After(time.Second):
+		t.Fatal("submission was not received")
+	}
+}
 
 func TestRunCommandParsesTaskAndFlags(t *testing.T) {
 	var cli CLI
@@ -58,7 +102,9 @@ func TestCommandsAreAvailable(t *testing.T) {
 		require.NoError(t, err)
 		ctx, err := parser.Parse(args)
 		require.NoError(t, err, "%v", args)
-		require.ErrorContains(t, ctx.Run(), "not implemented")
+		if args[0] == "pause" || args[0] == "resume" {
+			require.ErrorContains(t, ctx.Run(), "host lane unavailable")
+		}
 	}
 }
 

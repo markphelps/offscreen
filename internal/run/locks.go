@@ -139,6 +139,11 @@ var pageSize = regexp.MustCompile(`page size of (\d+) bytes`)
 // vm_stat's inactive and speculative pages can be reclaimed by the kernel;
 // counting only "free" would unnecessarily reduce concurrency on macOS.
 // Purgeable pages overlap other categories and must not be counted twice.
+// AvailableMemory reports reclaimable memory for daemon admission.
+func AvailableMemory() (uint64, error) {
+	return availableMemory()
+}
+
 func availableMemory() (uint64, error) {
 	out, err := exec.Command("vm_stat").Output()
 	if err != nil {
