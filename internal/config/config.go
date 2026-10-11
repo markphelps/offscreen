@@ -56,6 +56,9 @@ func Default() Config {
 
 // Path returns the location of the per-user config file.
 func Path() (string, error) {
+	if path := os.Getenv("OFFSCREEN_CONFIG"); path != "" {
+		return path, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("find home directory: %w", err)

@@ -1,14 +1,19 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"slices"
+	"syscall"
 	"time"
 
 	"github.com/alecthomas/kong"
 
+	"github.com/markphelps/offscreen/internal/config"
+	"github.com/markphelps/offscreen/internal/image"
 	"github.com/markphelps/offscreen/internal/logging"
 )
 
@@ -85,11 +90,26 @@ type ImageCmd struct {
 
 type ImageBuildCmd struct{}
 
-func (c *ImageBuildCmd) Run() error { return notImplemented("image build") }
+func (c *ImageBuildCmd) Run() error { return buildImage(false) }
 
 type ImageRefreshCmd struct{}
 
-func (c *ImageRefreshCmd) Run() error { return notImplemented("image refresh") }
+func (c *ImageRefreshCmd) Run() error { return buildImage(true) }
+
+func buildImage(refresh bool) error {
+	path, err := config.Path()
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	name, err := image.Build(ctx, path, refresh)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(os.Stdout, name)
+	return err
+}
 
 func notImplemented(command string) error {
 	return fmt.Errorf("offscreen %s: not implemented yet", command)
