@@ -78,6 +78,7 @@ type Server struct {
 	hostGate    func(context.Context, Job) (bool, string)
 	hostExecute func(context.Context, run.Options) run.Result
 	hostPaused  bool
+	hostControl hostControl
 	ctx         context.Context
 	stop        context.CancelFunc
 	fatal       chan struct{}
@@ -104,6 +105,13 @@ func open(cfg config.Config, executor func(context.Context, run.Options) run.Res
 		_ = lock.Close()
 		return nil, fmt.Errorf("daemon already running: %w", err)
 	}
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	cleanupErr := run.WaitForHostCleanup(cleanupCtx)
+	cleanupCancel()
+	if cleanupErr != nil {
+		_ = lock.Close()
+		return nil, cleanupErr
+	}
 	db, err := sql.Open("sqlite", filepath.Join(dir, "jobs.sqlite"))
 	if err != nil {
 		_ = lock.Close()
@@ -119,6 +127,12 @@ func open(cfg config.Config, executor func(context.Context, run.Options) run.Res
 		_ = lock.Close()
 		return nil, err
 	}
+	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS host_policy (
+ id INTEGER PRIMARY KEY CHECK (id = 1), paused INTEGER NOT NULL, paused_until TEXT NOT NULL)`); err != nil {
+		_ = db.Close()
+		_ = lock.Close()
+		return nil, fmt.Errorf("initialize host policy: %w", err)
+	}
 	if err := os.Chmod(filepath.Join(dir, "jobs.sqlite"), 0o600); err != nil {
 		_ = db.Close()
 		_ = lock.Close()
@@ -126,6 +140,12 @@ func open(cfg config.Config, executor func(context.Context, run.Options) run.Res
 	}
 	ctx, stop := context.WithCancel(context.Background())
 	s := &Server{db: db, lock: lock, cfg: cfg, executor: executor, tart: vm, memory: memory, jobs: make(map[string]*worker), ctx: ctx, stop: stop, fatal: make(chan struct{})}
+	if err := s.loadHostPolicy(); err != nil {
+		stop()
+		_ = db.Close()
+		_ = lock.Close()
+		return nil, err
+	}
 	if err := s.sweep(); err != nil {
 		stop()
 		_ = db.Close()
@@ -182,20 +202,14 @@ func (s *Server) transition(w *worker, state, reason string, code int) error {
 	candidate := w.job
 	candidate.State, candidate.Reason, candidate.Code, candidate.Updated = state, reason, code, time.Now()
 	if err := s.save(w, candidate); err != nil {
-		s.fatalErr = fmt.Errorf("persist job %s transition to %s: %w", w.job.ID, state, err)
-		close(s.fatal)
-		s.stop()
-		for _, active := range s.jobs {
-			if active.cancel != nil {
-				active.cancel()
-			}
-			if active.inputW != nil {
-				_ = active.inputW.Close()
-			}
-		}
-		return s.fatalErr
+		return s.failLocked(fmt.Errorf("persist job %s transition to %s: %w", w.job.ID, state, err))
 	}
 	w.job = candidate
+	if Terminal(state) && w.inputR != nil {
+		// Queued timeouts never execute a worker, so terminal transitions
+		// must also release any attached input request waiting on its pipe.
+		_ = w.inputR.Close()
+	}
 	return nil
 }
 
@@ -376,9 +390,84 @@ func (s *Server) ConfigureHost(gate func(context.Context, Job) (bool, string), e
 	s.hostExecute = execute
 }
 
+// All host-policy writes are durable before the candidate is published. A
+// persistence failure stops admission rather than acknowledging an unsafe state.
+func (s *Server) loadHostPolicy() error {
+	var paused int
+	var until string
+	err := s.db.QueryRow(`SELECT paused, paused_until FROM host_policy WHERE id = 1`).Scan(&paused, &until)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("load host policy: %w", err)
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, until)
+	if err != nil {
+		return fmt.Errorf("invalid persisted host pause deadline: %w", err)
+	}
+	s.hostPaused, s.hostControl.pausedUntil = paused != 0, parsed
+	return nil
+}
+
+// Called with s.mu held, including for the Not now action.
+func (s *Server) persistHostPolicy(paused bool, until time.Time) error {
+	if s.fatalErr != nil {
+		return s.fatalErr
+	}
+	value := 0
+	if paused {
+		value = 1
+	}
+	_, err := s.db.Exec(`INSERT INTO host_policy (id, paused, paused_until) VALUES (1, ?, ?)
+ ON CONFLICT(id) DO UPDATE SET paused=excluded.paused, paused_until=excluded.paused_until`, value, until.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return s.failLocked(fmt.Errorf("persist host pause policy: %w", err))
+	}
+	return nil
+}
+
+func (s *Server) failLocked(err error) error {
+	if s.fatalErr != nil {
+		return s.fatalErr
+	}
+	s.fatalErr = err
+	close(s.fatal)
+	s.stop()
+	for _, active := range s.jobs {
+		if active.cancel != nil {
+			active.cancel()
+		}
+		if active.inputW != nil {
+			_ = active.inputW.Close()
+		}
+	}
+	return err
+}
+
 // PauseHost and ResumeHost are the control seam for the idle-gate helper.
-func (s *Server) PauseHost()  { s.mu.Lock(); defer s.mu.Unlock(); s.hostPaused = true }
-func (s *Server) ResumeHost() { s.mu.Lock(); defer s.mu.Unlock(); s.hostPaused = false }
+func (s *Server) PauseHost() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.persistHostPolicy(true, s.hostControl.pausedUntil); err != nil {
+		return err
+	}
+	s.hostPaused = true
+	s.clearHostCountdown()
+	return nil
+}
+
+func (s *Server) ResumeHost() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.persistHostPolicy(false, time.Time{}); err != nil {
+		return err
+	}
+	s.hostPaused = false
+	s.hostControl.pausedUntil = time.Time{}
+	s.clearHostCountdown()
+	return nil
+}
 
 // RequeueHost takes the desktop back without retrying a VM job. An active host
 // worker is cancelled first; it returns to the front only after it has stopped.
@@ -422,13 +511,13 @@ func (s *Server) admit() {
 	if s.ctx.Err() != nil {
 		return
 	}
-	limit := min(2, max(1, s.cfg.VMSlots))
-	if limit > 1 && s.cfg.LowMemoryThresholdGB > 0 {
-		if m, err := s.memory(); err != nil || m < uint64(s.cfg.LowMemoryThresholdGB)*1024*1024*1024 {
-			limit = 1
-		}
-	}
 	now := time.Now()
+	s.expireHostReturn(now)
+	if len(s.order) == 0 {
+		return
+	}
+	limit := min(2, max(1, s.cfg.VMSlots))
+	memoryChecked := false
 	blocked := map[project.Lane]bool{}
 	for _, id := range s.order {
 		w := s.jobs[id]
@@ -449,50 +538,30 @@ func (s *Server) admit() {
 			continue
 		}
 		if blocked[w.job.Lane] {
+			if w.job.Lane == project.LaneHost && s.hostControl.countdownID == w.job.ID {
+				s.clearHostCountdown()
+			}
 			if s.transition(w, "queued", "waiting for earlier "+string(w.job.Lane)+" job", 0) != nil {
 				return
 			}
 			continue
 		}
-		if w.job.Lane == project.LaneVM && s.vmRunning >= limit {
-			blocked[w.job.Lane] = true
-			reason := "waiting for VM slot"
-			for _, other := range s.jobs {
-				if other.retained {
-					reason = "waiting for VM slot (retained VM; cancel job " + other.job.ID + " to release it)"
-					break
+		if w.job.Lane == project.LaneVM {
+			if !memoryChecked && limit > 1 && s.cfg.LowMemoryThresholdGB > 0 {
+				memoryChecked = true
+				if m, err := s.memory(); err != nil || m < uint64(s.cfg.LowMemoryThresholdGB)*1024*1024*1024 {
+					limit = 1
 				}
 			}
-			if s.transition(w, "queued", reason, 0) != nil {
-				return
-			}
-			continue
-		}
-		if w.job.Lane == project.LaneHost {
-			if s.hostPaused {
-				if s.transition(w, "queued", "host lane paused", 0) != nil {
-					return
+			if s.vmRunning >= limit {
+				blocked[w.job.Lane] = true
+				reason := "waiting for VM slot"
+				for _, other := range s.jobs {
+					if other.retained {
+						reason = "waiting for VM slot (retained VM; cancel job " + other.job.ID + " to release it)"
+						break
+					}
 				}
-				blocked[w.job.Lane] = true
-				continue
-			}
-			if s.hostRunning > 0 {
-				blocked[w.job.Lane] = true
-				if s.transition(w, "queued", "waiting for host slot", 0) != nil {
-					return
-				}
-				continue
-			}
-			if s.hostGate == nil || s.hostExecute == nil {
-				blocked[w.job.Lane] = true
-				if s.transition(w, "queued", "waiting for host idle gate (host lane unavailable)", 0) != nil {
-					return
-				}
-				continue
-			}
-			ready, reason := s.hostGate(s.ctx, w.job)
-			if !ready {
-				blocked[w.job.Lane] = true
 				if s.transition(w, "queued", reason, 0) != nil {
 					return
 				}
@@ -515,6 +584,9 @@ func (s *Server) admit() {
 			}
 		}
 		if busy {
+			if w.job.Lane == project.LaneHost {
+				s.clearHostCountdown()
+			}
 			blocked[w.job.Lane] = true
 			reason := "waiting for exclusive project"
 			if retained {
@@ -524,6 +596,44 @@ func (s *Server) admit() {
 				return
 			}
 			continue
+		}
+		if w.job.Lane == project.LaneHost {
+			if s.hostPaused || now.Before(s.hostControl.pausedUntil) {
+				s.clearHostCountdown()
+				if s.transition(w, "queued", "host lane paused", 0) != nil {
+					return
+				}
+				blocked[w.job.Lane] = true
+				continue
+			}
+			if s.hostRunning > 0 {
+				s.clearHostCountdown()
+				blocked[w.job.Lane] = true
+				if s.transition(w, "queued", "waiting for host slot", 0) != nil {
+					return
+				}
+				continue
+			}
+			if s.hostGate == nil || s.hostExecute == nil {
+				s.clearHostCountdown()
+				blocked[w.job.Lane] = true
+				if s.transition(w, "queued", "waiting for host idle gate (host lane unavailable)", 0) != nil {
+					return
+				}
+				continue
+			}
+			ready, reason := s.hostGate(s.ctx, w.job)
+			if !ready {
+				blocked[w.job.Lane] = true
+				if s.transition(w, "queued", reason, 0) != nil {
+					return
+				}
+				continue
+			}
+		}
+		if w.job.Lane == project.LaneHost {
+			s.clearHostCountdown()
+			s.hostControl.returnUntil = time.Time{}
 		}
 		if s.transition(w, "preparing", "", 0) != nil {
 			return
@@ -551,6 +661,11 @@ func (s *Server) execute(ctx context.Context, w *worker) {
 		s.workers.Done()
 		close(done)
 	}()
+	if w.inputR != nil {
+		// A command may exit without consuming stdin. Release its HTTP writer
+		// and the guardian's input copier before publishing cleanup completion.
+		defer func() { _ = w.inputR.Close() }()
+	}
 	if !w.job.Deadline.IsZero() {
 		var stop context.CancelFunc
 		ctx, stop = context.WithDeadline(ctx, w.job.Deadline)
@@ -569,6 +684,8 @@ func (s *Server) execute(ctx context.Context, w *worker) {
 			}
 		} else {
 			s.hostRunning--
+			s.hostControl.returnUntil = time.Time{}
+			s.hostControl.returnID = ""
 		}
 		w.cancel = nil
 		s.mu.Unlock()
@@ -608,6 +725,16 @@ func (s *Server) execute(ctx context.Context, w *worker) {
 	// Capture the actual executor result even if cancel raced publication.
 	// Only this defer decides whether to release the execution's slot.
 	retainSlot = w.job.Lane == project.LaneVM && result.Kept
+	if errors.Is(result.Err, run.ErrCleanupUnconfirmed) {
+		// A bounded guardian timeout cannot release the desktop for another
+		// job. Stop this service; the next startup waits on its cleanup lease.
+		if w.job.State != "cancelled" {
+			_ = s.transition(w, "failed", result.Err.Error(), exitcode.RunnerFailure)
+		}
+		_ = s.failLocked(fmt.Errorf("unconfirmed process cleanup for job %s: %w", w.job.ID, result.Err))
+		w.requeueReason = ""
+		return
+	}
 	if w.job.State == "cancelled" {
 		w.requeueReason = ""
 		return
@@ -654,6 +781,13 @@ func (s *Server) Serve(ctx context.Context) error {
 	defer func() { _ = listener.Close(); _ = os.Remove(socket) }()
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /submit", s.handleSubmit)
+	mux.HandleFunc("GET /host/status", s.handleHostStatus)
+	mux.HandleFunc("POST /host/snapshot", s.handleHostSnapshot)
+	mux.HandleFunc("POST /host/pause", s.handleHostPause)
+	mux.HandleFunc("POST /host/resume", s.handleHostResume)
+	mux.HandleFunc("POST /host/not-now/{id}", s.handleNotNow)
+	mux.HandleFunc("POST /host/return/{id}", s.handleHostReturn)
+	mux.HandleFunc("POST /host/take-back/{id}", s.handleTakeBack)
 	mux.HandleFunc("GET /jobs", s.handleJobs)
 	mux.HandleFunc("GET /jobs/{id}", s.handleJob)
 	mux.HandleFunc("POST /jobs/{id}/cancel", s.handleCancel)

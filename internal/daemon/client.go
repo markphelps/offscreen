@@ -103,6 +103,22 @@ func (c Client) Cancel(ctx context.Context, id string) (Job, error) {
 	return job, err
 }
 
+// HostAction sends a user-initiated host-lane control action over the private socket.
+func (c Client) HostAction(ctx context.Context, action, id string) (HostStatus, error) {
+	path := "/host/" + action
+	if id != "" {
+		path += "/" + url.PathEscape(id)
+	}
+	resp, err := c.call(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return HostStatus{}, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var status HostStatus
+	err = json.NewDecoder(resp.Body).Decode(&status)
+	return status, err
+}
+
 func (c Client) Input(ctx context.Context, id string, input io.Reader) {
 	resp, err := c.call(ctx, "POST", "/jobs/"+url.PathEscape(id)+"/input", input)
 	if err != nil {
