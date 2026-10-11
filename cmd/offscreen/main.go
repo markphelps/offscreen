@@ -21,6 +21,7 @@ import (
 	"github.com/markphelps/offscreen/internal/image"
 	"github.com/markphelps/offscreen/internal/logging"
 	"github.com/markphelps/offscreen/internal/project"
+	"github.com/markphelps/offscreen/internal/run"
 )
 
 type CLI struct {
@@ -157,7 +158,7 @@ func (*StatusCmd) Run() error {
 
 type LogsCmd struct {
 	Job    string `arg:"" help:"Job ID."`
-	Follow bool   `help:"Follow output as it arrives." short:"f"`
+	Follow bool   `help:"Follow output as it arrives; --no-follow prints a snapshot." short:"f" default:"true" negatable:""`
 }
 
 func (c *LogsCmd) Run() error {
@@ -201,13 +202,23 @@ func (c *CancelCmd) Run() error {
 type PauseCmd struct{}
 
 func (*PauseCmd) Run() error {
-	return fmt.Errorf("host lane unavailable until host helper is installed")
+	client, err := daemon.Dial()
+	if err != nil {
+		return err
+	}
+	_, err = client.HostAction(context.Background(), "pause", "")
+	return err
 }
 
 type ResumeCmd struct{}
 
 func (*ResumeCmd) Run() error {
-	return fmt.Errorf("host lane unavailable until host helper is installed")
+	client, err := daemon.Dial()
+	if err != nil {
+		return err
+	}
+	_, err = client.HostAction(context.Background(), "resume", "")
+	return err
 }
 
 type DaemonCmd struct {
@@ -268,6 +279,9 @@ func execute(args []string) error {
 }
 
 func main() {
+	if run.MaybeGuardian(os.Args[1:]) {
+		return
+	}
 	if err := execute(os.Args[1:]); err != nil {
 		if status, ok := errors.AsType[runExit](err); ok {
 			os.Exit(int(status))

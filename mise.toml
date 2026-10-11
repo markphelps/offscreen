@@ -8,6 +8,14 @@ goreleaser = "2.17.1"
 description = "Build the client and daemon"
 run = "mkdir -p bin && go build -o bin/offscreen ./cmd/offscreen && go build -o bin/offscreend ./cmd/offscreend"
 
+[tasks."helper:build"]
+description = "Build and bundle the native host helper"
+run = "cd helper && swift build && ./scripts/bundle.sh"
+
+[tasks."helper:install"]
+description = "Install the native helper LaunchAgent"
+run = "helper/scripts/install.sh"
+
 [tasks.test]
 description = "Run Go tests"
 run = "go test ./..."

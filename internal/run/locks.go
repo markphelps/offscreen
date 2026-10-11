@@ -18,7 +18,7 @@ import (
 // Slots are advisory OS locks, shared by synchronous clients and future daemon
 // workers. The optional project lock is held for the entire job, including prepare.
 func acquire(ctx context.Context, dir, root string, exclusive bool, slots, threshold int) (func(), error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil { // #nosec G703 -- caller constructs this owner-only lock dir from its state directory.
 		return nil, err
 	}
 	var project *os.File
@@ -120,7 +120,7 @@ func waitLock(ctx context.Context, path string) (*os.File, error) {
 }
 
 func tryLock(path string) (*os.File, error) {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600) // #nosec G703 -- lock filename is derived from owner state dir and fixed/hash-only components.
 	if err != nil {
 		return nil, err
 	}

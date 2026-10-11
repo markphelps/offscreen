@@ -74,11 +74,14 @@ func Execute(ctx context.Context, o Options) (result Result) {
 		return
 	}
 	base := filepath.Join(home, "Library", "Caches", "offscreen")
+	if state := os.Getenv("OFFSCREEN_STATE_DIR"); state != "" {
+		base = state
+	}
 	result.Artifacts = o.Artifacts
 	if result.Artifacts == "" {
 		result.Artifacts = filepath.Join(base, "jobs", result.ID)
 	}
-	if err := os.MkdirAll(result.Artifacts, 0o700); err != nil {
+	if err := os.MkdirAll(result.Artifacts, 0o700); err != nil { // #nosec G703 -- daemon-owned job output or explicit standalone caller output directory.
 		result.Code, result.Err = exitcode.RunnerFailure, err
 		return
 	}
@@ -88,7 +91,7 @@ func Execute(ctx context.Context, o Options) (result Result) {
 		return
 	}
 	cache := filepath.Join(base, "projects", projectKey(o.Contract.Root))
-	if err := os.MkdirAll(cache, 0o700); err != nil {
+	if err := os.MkdirAll(cache, 0o700); err != nil { // #nosec G703 -- owner state path plus a SHA-256 project key, never raw project path.
 		fail(err)
 		return
 	}
@@ -142,10 +145,10 @@ func Execute(ctx context.Context, o Options) (result Result) {
 		return
 	}
 	if spec.Prepare != "" {
-		cmd := exec.CommandContext(ctx, "/bin/bash", "-o", "pipefail", "-c", spec.Prepare) // #nosec G204 -- project-owned contract explicitly supplies a host shell command
+		cmd := exec.Command("/bin/bash", "-o", "pipefail", "-c", spec.Prepare) // #nosec G204 -- project-owned contract explicitly supplies a host shell command
 		cmd.Dir, cmd.Stdout, cmd.Stderr = spec.Root, o.Stderr, o.Stderr
 		cmd.Env = hostCommandEnv(hostEnv)
-		if err := cmd.Run(); err != nil {
+		if err := runGroup(ctx, cmd); err != nil {
 			fail(fmt.Errorf("host prepare: %w", err))
 			return
 		}

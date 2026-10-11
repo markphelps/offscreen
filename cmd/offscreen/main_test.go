@@ -89,6 +89,7 @@ func TestRunCommandPassesThroughRawCommand(t *testing.T) {
 }
 
 func TestCommandsAreAvailable(t *testing.T) {
+	t.Setenv("OFFSCREEN_STATE_DIR", t.TempDir())
 	for _, args := range [][]string{
 		{"status"},
 		{"logs", "job-1", "--follow"},
@@ -103,8 +104,27 @@ func TestCommandsAreAvailable(t *testing.T) {
 		ctx, err := parser.Parse(args)
 		require.NoError(t, err, "%v", args)
 		if args[0] == "pause" || args[0] == "resume" {
-			require.ErrorContains(t, ctx.Run(), "host lane unavailable")
+			require.ErrorContains(t, ctx.Run(), "offscreend is not running")
 		}
+	}
+}
+
+func TestLogsFollowsByDefaultAndSupportsSnapshot(t *testing.T) {
+	for _, tc := range []struct {
+		args   []string
+		follow bool
+	}{
+		{[]string{"logs", "job-1"}, true},
+		{[]string{"logs", "job-1", "-f"}, true},
+		{[]string{"logs", "job-1", "--follow"}, true},
+		{[]string{"logs", "job-1", "--no-follow"}, false},
+	} {
+		var cli CLI
+		parser, err := kong.New(&cli)
+		require.NoError(t, err)
+		_, err = parser.Parse(tc.args)
+		require.NoError(t, err, "%v", tc.args)
+		require.Equal(t, tc.follow, cli.Logs.Follow, "%v", tc.args)
 	}
 }
 
