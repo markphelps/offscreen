@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"slices"
+	"strings"
 	"syscall"
 	"time"
 
@@ -15,131 +16,223 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/markphelps/offscreen/internal/config"
+	"github.com/markphelps/offscreen/internal/daemon"
+	"github.com/markphelps/offscreen/internal/exitcode"
 	"github.com/markphelps/offscreen/internal/image"
 	"github.com/markphelps/offscreen/internal/logging"
 	"github.com/markphelps/offscreen/internal/project"
-	"github.com/markphelps/offscreen/internal/run"
 )
 
-// CLI declares the public command surface.
 type CLI struct {
 	LogLevel  string       `help:"Log level (debug, info, warn, error)." env:"OFFSCREEN_LOG_LEVEL" default:"info"`
 	Run       RunCmd       `cmd:"" help:"Run a project task or command."`
-	Status    StatusCmd    `cmd:"" help:"Show running and queued jobs."`
-	Logs      LogsCmd      `cmd:"" help:"Print or follow a job's output."`
+	Status    StatusCmd    `cmd:"" help:"Show jobs including terminal records."`
+	Logs      LogsCmd      `cmd:"" help:"Print or follow job output."`
 	Artifacts ArtifactsCmd `cmd:"" help:"Print a job's artifact directory."`
-	Cancel    CancelCmd    `cmd:"" help:"Cancel a queued or running job."`
+	Cancel    CancelCmd    `cmd:"" help:"Cancel a job."`
 	Pause     PauseCmd     `cmd:"" help:"Pause the host lane."`
 	Resume    ResumeCmd    `cmd:"" help:"Resume the host lane."`
 	Image     ImageCmd     `cmd:"" help:"Manage the golden image."`
+	Daemon    DaemonCmd    `cmd:"" help:"Manage the background daemon."`
 }
-
-// RunCmd accepts either a named task or -- followed by an arbitrary command.
 type RunCmd struct {
 	Lane     string        `help:"Execution lane." enum:"vm,host,auto" default:"auto"`
 	Timeout  time.Duration `help:"Maximum time waiting or running." default:"0s"`
 	Keep     bool          `help:"Keep the VM after a failed job."`
-	Worktree string        `help:"Path to a git worktree (defaults to the current directory)." type:"path"`
-	Detach   bool          `help:"Print the job ID without waiting for completion."`
-	Project  string        `arg:"" name:"project" help:"Project name from .offscreen.toml."`
-	Args     []string      `arg:"" optional:"" name:"task-or-command" help:"Task name, or -- followed by a command."`
-	Direct   bool          `kong:"-"` // True when -- separates the project from a raw command.
+	Worktree string        `help:"Path to a git worktree." type:"path"`
+	Detach   bool          `help:"Print the job ID without waiting."`
+	Project  string        `arg:"" name:"project"`
+	Args     []string      `arg:"" optional:"" name:"task-or-command"`
+	Direct   bool          `kong:"-"`
 }
 
-func (c *RunCmd) Run() error {
+func (c *RunCmd) Run() (runErr error) {
 	if len(c.Args) == 0 {
-		return fmt.Errorf("run: supply a task or -- followed by a command; see offscreen run --help")
+		return fmt.Errorf("run: supply a task or -- followed by a command")
 	}
 	if !c.Direct && len(c.Args) != 1 {
-		return fmt.Errorf("run: supply one task, or use -- before a command; see offscreen run --help")
-	}
-	if c.Detach {
-		return errors.New("run --detach requires offscreend (not implemented yet)")
+		return fmt.Errorf("run: supply one task, or use -- before a command")
 	}
 	contract, err := project.Discover("", c.Worktree, c.Project)
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load()
+	client, err := daemon.Dial()
 	if err != nil {
 		return err
 	}
-	request := run.Options{
-		Config: cfg, Contract: contract, Lane: project.Lane(c.Lane),
-		Timeout: c.Timeout, Keep: c.Keep,
-		Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr,
-	}
+	req := daemon.Request{Root: contract.Root, Project: c.Project, Lane: project.Lane(c.Lane), Timeout: c.Timeout, Keep: c.Keep, Detach: c.Detach, HostEnv: hostEnvironment(os.Environ())}
 	if c.Direct {
-		request.Argv = c.Args
+		req.Argv = c.Args
 	} else {
-		request.Task = c.Args[0]
+		req.Task = c.Args[0]
 	}
 	_, ttyErr := unix.IoctlGetTermios(int(os.Stdin.Fd()), unix.TIOCGETA)
-	request.TTY = ttyErr == nil
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-	result := run.Execute(ctx, request)
-	if result.Err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, "offscreen run:", result.Err)
+	req.TTY = ttyErr == nil && !c.Detach
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	job, err := client.Submit(ctx, req)
+	if err != nil {
+		return runFailure{err}
 	}
-	if result.Kept {
-		_, _ = fmt.Fprintln(os.Stderr, "VM kept for inspection: tart run", result.VM)
+	if c.Detach {
+		_, err = fmt.Fprintln(os.Stdout, job.ID)
+		return err
 	}
-	_, _ = fmt.Fprintf(os.Stderr, "job %s artifacts %s\n", result.ID, result.Artifacts)
-	if result.Code != 0 {
-		return runExit(result.Code)
+	// Keep the accepted identity even when Stream fails and returns a zero Job.
+	// Never imply completion if the daemon could not confirm cleanup.
+	cleanupConfirmed := false
+	defer func() {
+		if _, ok := errors.AsType[runFailure](runErr); ok {
+			_, _ = fmt.Fprintln(os.Stderr, runErr)
+			runErr = runExit(exitcode.RunnerFailure)
+		}
+		if cleanupConfirmed {
+			_, _ = fmt.Fprintf(os.Stderr, "job %s artifacts %s\n", job.ID, job.Artifacts)
+		} else {
+			_, _ = fmt.Fprintf(os.Stderr, "job %s artifacts %s (cleanup unconfirmed)\n", job.ID, job.Artifacts)
+		}
+	}()
+	go client.Input(ctx, job.ID, os.Stdin)
+	finished, streamErr := client.Stream(ctx, job.ID, os.Stdout, os.Stderr)
+	if ctx.Err() != nil || streamErr != nil {
+		// The server gives cleanup 130 seconds. A shorter client deadline
+		// would report completion while the clone is still being destroyed.
+		cancelCtx, cancel := context.WithTimeout(context.Background(), 135*time.Second)
+		_, cancelErr := client.Cancel(cancelCtx, job.ID)
+		cancel()
+		if cancelErr != nil {
+			return runFailure{fmt.Errorf("cancel job %s: %w", job.ID, errors.Join(cancelErr, streamErr))}
+		}
+		cleanupConfirmed = true
+		if ctx.Err() != nil {
+			return runExit(exitcode.RunnerFailure)
+		}
+		return runFailure{streamErr}
+	}
+	cleanupConfirmed = true
+	if finished.Reason != "" {
+		_, _ = fmt.Fprintln(os.Stderr, "offscreen run:", finished.Reason)
+	}
+	if finished.Code != 0 {
+		return runExit(finished.Code)
 	}
 	return nil
+}
+
+// Capture the submitting process's environment for host-only resolution and
+// preparation. Split on the first '=' so values may contain '=' unchanged.
+func hostEnvironment(entries []string) map[string]string {
+	env := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		if key, value, ok := strings.Cut(entry, "="); ok {
+			env[key] = value
+		}
+	}
+	return env
 }
 
 type runExit int
 
 func (e runExit) Error() string { return fmt.Sprintf("job exited %d", e) }
 
+type runFailure struct{ error }
+
 type StatusCmd struct{}
 
-func (c *StatusCmd) Run() error { return notImplemented("status") }
+func (*StatusCmd) Run() error {
+	client, err := daemon.Dial()
+	if err != nil {
+		return err
+	}
+	jobs, err := client.Jobs(context.Background())
+	if err != nil {
+		return err
+	}
+	for _, j := range jobs {
+		_, _ = fmt.Fprintf(os.Stdout, "%s  %s  %s  %s  %s  %s\n", j.ID, j.Project, j.Task, j.Lane, j.State, j.Reason)
+	}
+	return nil
+}
 
 type LogsCmd struct {
 	Job    string `arg:"" help:"Job ID."`
 	Follow bool   `help:"Follow output as it arrives." short:"f"`
 }
 
-func (c *LogsCmd) Run() error { return notImplemented("logs") }
+func (c *LogsCmd) Run() error {
+	client, err := daemon.Dial()
+	if err != nil {
+		return err
+	}
+	return client.Logs(context.Background(), c.Job, c.Follow, os.Stdout, os.Stderr)
+}
 
 type ArtifactsCmd struct {
 	Job string `arg:"" help:"Job ID."`
 }
 
-func (c *ArtifactsCmd) Run() error { return notImplemented("artifacts") }
+func (c *ArtifactsCmd) Run() error {
+	client, err := daemon.Dial()
+	if err != nil {
+		return err
+	}
+	job, err := client.Job(context.Background(), c.Job)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(os.Stdout, job.Artifacts)
+	return err
+}
 
 type CancelCmd struct {
 	Job string `arg:"" help:"Job ID."`
 }
 
-func (c *CancelCmd) Run() error { return notImplemented("cancel") }
+func (c *CancelCmd) Run() error {
+	client, err := daemon.Dial()
+	if err != nil {
+		return err
+	}
+	_, err = client.Cancel(context.Background(), c.Job)
+	return err
+}
 
 type PauseCmd struct{}
 
-func (c *PauseCmd) Run() error { return notImplemented("pause") }
+func (*PauseCmd) Run() error {
+	return fmt.Errorf("host lane unavailable until host helper is installed")
+}
 
 type ResumeCmd struct{}
 
-func (c *ResumeCmd) Run() error { return notImplemented("resume") }
+func (*ResumeCmd) Run() error {
+	return fmt.Errorf("host lane unavailable until host helper is installed")
+}
+
+type DaemonCmd struct {
+	Install   DaemonInstallCmd   `cmd:"" help:"Install and start the launch agent."`
+	Uninstall DaemonUninstallCmd `cmd:"" help:"Stop and remove the launch agent."`
+}
+type DaemonInstallCmd struct{}
+
+func (*DaemonInstallCmd) Run() error { return daemon.Install() }
+
+type DaemonUninstallCmd struct{}
+
+func (*DaemonUninstallCmd) Run() error { return daemon.Uninstall() }
 
 type ImageCmd struct {
 	Build   ImageBuildCmd   `cmd:"" help:"Build a new golden image."`
-	Refresh ImageRefreshCmd `cmd:"" help:"Rebuild the golden image after a system update."`
+	Refresh ImageRefreshCmd `cmd:"" help:"Rebuild the image after an update."`
 }
-
 type ImageBuildCmd struct{}
 
-func (c *ImageBuildCmd) Run() error { return buildImage(false) }
+func (*ImageBuildCmd) Run() error { return buildImage(false) }
 
 type ImageRefreshCmd struct{}
 
-func (c *ImageRefreshCmd) Run() error { return buildImage(true) }
-
+func (*ImageRefreshCmd) Run() error { return buildImage(true) }
 func buildImage(refresh bool) error {
 	path, err := config.Path()
 	if err != nil {
@@ -155,26 +248,16 @@ func buildImage(refresh bool) error {
 	return err
 }
 
-func notImplemented(command string) error {
-	return fmt.Errorf("offscreen %s: not implemented yet", command)
-}
-
 func execute(args []string) error {
 	var cli CLI
-	parser, err := kong.New(&cli,
-		kong.Name("offscreen"),
-		kong.Description("Run Mac GUI jobs without taking over your desktop."),
-		kong.UsageOnError(),
-	)
+	parser, err := kong.New(&cli, kong.Name("offscreen"), kong.Description("Run Mac GUI jobs without taking over your desktop."), kong.UsageOnError())
 	if err != nil {
-		return fmt.Errorf("create CLI: %w", err)
+		return err
 	}
 	ctx, err := parser.Parse(args)
 	if err != nil {
-		return fmt.Errorf("parse command: %w", err)
+		return err
 	}
-	// Kong consumes -- during parsing. Retain it so the runner can distinguish
-	// a named task from an arbitrary command with the same first argument.
 	cli.Run.Direct = slices.Contains(args, "--")
 	logger, err := logging.New(cli.LogLevel)
 	if err != nil {
@@ -189,7 +272,13 @@ func main() {
 		if status, ok := errors.AsType[runExit](err); ok {
 			os.Exit(int(status))
 		}
-		_, _ = os.Stderr.WriteString(err.Error() + "\n")
+		_, _ = fmt.Fprintln(os.Stderr, err)
+		if errors.Is(err, daemon.ErrUnavailable) {
+			os.Exit(exitcode.RunnerFailure)
+		}
+		if _, ok := errors.AsType[runFailure](err); ok {
+			os.Exit(exitcode.RunnerFailure)
+		}
 		os.Exit(1)
 	}
 }
