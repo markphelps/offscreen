@@ -1,0 +1,17 @@
+project = "sample"
+exclusive = true
+
+[prepare]
+run = "./scripts/build.sh"
+share = ["$BUILD_DIR/app.bundle", "relative/assets"]
+
+[guest]
+setup = "./scripts/setup.sh"
+
+[tasks.test]
+lane = "vm"
+run = "./scripts/test.sh"
+
+[tasks.capture]
+lane = "host"
+run = "./scripts/capture.sh"
