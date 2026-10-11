@@ -211,18 +211,46 @@ func Execute(ctx context.Context, o Options) (result Result) {
 		err = guest.Stream(ctx, sshClient, prefix+guest.Command(spec.Command.Shell, spec.Command.Argv), o.Stdin, o.Stdout, o.Stderr, o.TTY)
 	}
 	result.Code, result.Err = commandExit(err)
-	// Collect artifacts even when setup or the task failed. A collection error
-	// takes precedence only when the guest command itself succeeded.
-	if ctx.Err() == nil {
-		if collectErr := receiveTar(ctx, sshClient, guestOut, result.Artifacts); collectErr != nil {
-			if result.Err == nil {
-				fail(fmt.Errorf("collect artifacts: %w", collectErr))
-			} else {
-				result.Err = fmt.Errorf("%w; collect artifacts: %w", result.Err, collectErr)
+	// Collect while the clone is still running, even after the active context
+	// expires. Stream closes its SSH client on cancellation, so recovery must
+	// dial again under a separate, short-lived context.
+	collectErr := collectArtifacts(ctx,
+		func(active context.Context) error {
+			return receiveTar(active, sshClient, guestOut, result.Artifacts)
+		},
+		func(cleanup context.Context) error {
+			recoveryClient, err := waitGuest(cleanup, client, creds, result.VM)
+			if err != nil {
+				return fmt.Errorf("reconnect guest for artifacts: %w", err)
 			}
+			defer func() { _ = recoveryClient.Close() }()
+			return receiveTar(cleanup, recoveryClient, guestOut, result.Artifacts)
+		},
+	)
+	if collectErr != nil {
+		if result.Err == nil {
+			fail(fmt.Errorf("collect artifacts: %w", collectErr))
+		} else {
+			result.Err = fmt.Errorf("%w; collect artifacts: %w", result.Err, collectErr)
 		}
 	}
 	return
+}
+
+// collectArtifacts uses the original connection while it is live. If the
+// active deadline/cancellation has closed it (including mid-transfer), retry
+// once with a fresh connection. The single recovery budget covers both dial
+// and transfer; it never extends the active job's execution time or exit code.
+func collectArtifacts(ctx context.Context, collect, recoverArtifacts func(context.Context) error) error {
+	if ctx.Err() == nil {
+		err := collect(ctx)
+		if err == nil || ctx.Err() == nil {
+			return err
+		}
+	}
+	cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return recoverArtifacts(cleanup)
 }
 
 func commandExit(err error) (int, error) {
