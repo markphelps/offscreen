@@ -1,0 +1,58 @@
+---
+version: 2
+project_name: offscreen
+
+builds:
+  - id: offscreen
+    main: ./cmd/offscreen
+    binary: offscreen
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin]
+    goarch: [arm64]
+  - id: offscreend
+    main: ./cmd/offscreend
+    binary: offscreend
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin]
+    goarch: [arm64]
+
+archives:
+  - id: offscreen
+    ids: [offscreen, offscreend]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+homebrew_casks:
+  - name: offscreen
+    ids: [offscreen]
+    homepage: https://github.com/markphelps/offscreen
+    description: Run Mac GUI jobs in disposable virtual machines
+    directory: Casks
+    url:
+      template: "https://github.com/markphelps/offscreen/releases/download/\
+        {{ .Tag }}/{{ .ArtifactName }}"
+    binaries:
+      - offscreen
+      - offscreend
+    repository:
+      owner: markphelps
+      name: homebrew-tap
+      branch: main
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            ["offscreen", "offscreend"].each do |binary|
+              system_command "/usr/bin/xattr",
+                             args: ["-dr", "com.apple.quarantine",
+                                    "#{staged_path}/#{binary}"]
+            end
+          end
