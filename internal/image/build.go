@@ -173,6 +173,11 @@ func Build(ctx context.Context, path string, refresh bool) (string, error) {
 		return "", fmt.Errorf("unrecognized guest Xcode version: %q", versionOutput)
 	}
 	name := fmt.Sprintf("offscreen-%s-xcode%s-%s", time.Now().Format("20060102"), match[1], suffix)
+	// The golden disk is cloned immediately after stopping Tart. Flush guest
+	// filesystem writes so setup scripts and login services survive that clone.
+	if _, err := guest.Run(sshClient, "/usr/bin/sync", nil); err != nil {
+		return "", fmt.Errorf("flush guest filesystem before sealing image: %w", err)
+	}
 	_ = sshClient.Close()
 	stopCtx, cancelStop := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancelStop()
