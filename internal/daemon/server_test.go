@@ -261,12 +261,12 @@ func TestHostGatePauseAndTakeBackRequeue(t *testing.T) {
 		j, e := client.Job(context.Background(), host.ID)
 		return e == nil && j.Reason == "waiting for countdown"
 	}, time.Second, 20*time.Millisecond)
-	s.PauseHost()
+	require.NoError(t, s.PauseHost())
 	require.Eventually(t, func() bool {
 		j, e := client.Job(context.Background(), host.ID)
 		return e == nil && j.Reason == "host lane paused"
 	}, time.Second, 20*time.Millisecond)
-	s.ResumeHost()
+	require.NoError(t, s.ResumeHost())
 	ready.Store(true)
 	waitState(t, client, host.ID, "running")
 	ready.Store(false)
