@@ -2,7 +2,9 @@ package image
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,6 +45,29 @@ func TestImageSmoke(t *testing.T) {
 	out, err := guest.Run(connection, "/usr/bin/automationmodetool || true", nil)
 	require.NoError(t, err)
 	require.Contains(t, out, "DOES NOT REQUIRE user authentication")
+	_, err = guest.Run(connection, `osascript -e 'tell application "System Events" to get name of every process'`, nil)
+	require.NoError(t, err, "GUI session missing")
+	out, err = guest.Run(connection, "launchctl list com.offscreen.display", nil)
+	require.NoError(t, err, "display LaunchAgent not loaded")
+	require.Contains(t, out, "LastExitStatus")
+	display, err := parseDisplay(cfg.Image.Display)
+	require.NoError(t, err)
+	pixelWidth, pixelHeight := display.width, display.height
+	if display.unit == "pt" {
+		pixelWidth *= 2
+		pixelHeight *= 2
+	}
+	var capture string
+	for range 60 {
+		capture, err = guest.Run(connection, "screencapture -x /tmp/offscreen-image-smoke.png && sips -g pixelWidth -g pixelHeight /tmp/offscreen-image-smoke.png", nil)
+		if err == nil && strings.Contains(capture, fmt.Sprintf("pixelWidth: %d", pixelWidth)) && strings.Contains(capture, fmt.Sprintf("pixelHeight: %d", pixelHeight)) {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	require.NoError(t, err)
+	require.Contains(t, capture, fmt.Sprintf("pixelWidth: %d", pixelWidth))
+	require.Contains(t, capture, fmt.Sprintf("pixelHeight: %d", pixelHeight))
 	if marker := os.Getenv("OFFSCREEN_IMAGE_SMOKE_MARKER"); marker != "" {
 		_, err := guest.Run(connection, "test -f "+guest.Quote(marker), nil)
 		require.NoError(t, err, "setup marker %q missing", marker)

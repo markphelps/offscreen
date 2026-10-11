@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,7 +23,7 @@ import (
 	"github.com/markphelps/offscreen/internal/tart"
 )
 
-//go:embed scripts/*.sh
+//go:embed scripts/*.sh scripts/*.swift
 var scripts embed.FS
 
 var (
@@ -37,8 +38,9 @@ func Build(ctx context.Context, path string, refresh bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !displayPattern.MatchString(cfg.Image.Display) {
-		return "", fmt.Errorf("invalid image display %q: expected WIDTHxHEIGHT[pt|px]", cfg.Image.Display)
+	display, err := parseDisplay(cfg.Image.Display)
+	if err != nil {
+		return "", err
 	}
 	if cfg.Image.Base == "" {
 		return "", fmt.Errorf("image base must not be empty")
@@ -109,6 +111,11 @@ func Build(ctx context.Context, path string, refresh bool) (string, error) {
 		return "", err
 	}
 	defer func() { _ = sshClient.Close() }()
+	// Apply the mode before driving System Events: an unsupported Tart hint
+	// can leave WindowServer unable to answer Apple Events at all.
+	if err := installDisplay(sshClient, display); err != nil {
+		return "", fmt.Errorf("configure guest display %q: %w (guest LaunchAgent logs: ~/Library/Logs/offscreen/display.err and display.log)", cfg.Image.Display, err)
+	}
 	check, err := scripts.ReadFile("scripts/check.sh")
 	if err != nil {
 		return "", err
@@ -184,6 +191,50 @@ func Build(ctx context.Context, path string, refresh bool) (string, error) {
 	}
 	owned = ""
 	return name, nil
+}
+
+type displaySpec struct {
+	width, height int
+	unit          string
+}
+
+func parseDisplay(value string) (displaySpec, error) {
+	if !displayPattern.MatchString(value) {
+		return displaySpec{}, fmt.Errorf("invalid image display %q: expected WIDTHxHEIGHT[pt|px]", value)
+	}
+	unit := "pt"
+	dimensions := value
+	if strings.HasSuffix(value, "px") || strings.HasSuffix(value, "pt") {
+		unit = value[len(value)-2:]
+		dimensions = value[:len(value)-2]
+	}
+	parts := strings.Split(dimensions, "x")
+	width, widthErr := strconv.Atoi(parts[0])
+	height, heightErr := strconv.Atoi(parts[1])
+	if widthErr != nil || heightErr != nil || width > int(^uint(0)>>1)/2 || height > int(^uint(0)>>1)/2 {
+		return displaySpec{}, fmt.Errorf("invalid image display %q: dimensions exceed supported range", value)
+	}
+	return displaySpec{width: width, height: height, unit: unit}, nil
+}
+
+func installDisplay(client *ssh.Client, display displaySpec) error {
+	source, err := scripts.ReadFile("scripts/display.swift")
+	if err != nil {
+		return err
+	}
+	command := `/bin/mkdir -p "$HOME/Library/Application Support/offscreen" && /bin/cat > "$HOME/Library/Application Support/offscreen/display.swift"`
+	if _, err := guest.Run(client, command, strings.NewReader(string(source))); err != nil {
+		return fmt.Errorf("copy display selector: %w", err)
+	}
+	installer, err := scripts.ReadFile("scripts/display.sh")
+	if err != nil {
+		return err
+	}
+	args := fmt.Sprintf("/bin/bash -e -s -- %d %d %s", display.width, display.height, display.unit)
+	if _, err := guest.Run(client, args, strings.NewReader(string(installer))); err != nil {
+		return fmt.Errorf("install, apply and verify display: %w", err)
+	}
+	return nil
 }
 
 func waitForGuest(ctx context.Context, client tart.Client, creds guest.Credentials, name string) (*ssh.Client, error) {
