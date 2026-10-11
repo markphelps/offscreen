@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -37,10 +38,15 @@ type Result struct {
 
 // Options hold the host and guest streams for an execution.
 type Options struct {
+	ID             string // Daemon-assigned ID; empty for standalone callers.
+	Artifacts      string // Daemon-assigned directory; empty uses the default cache.
+	SkipLock       bool   // Daemon scheduler owns admission and project exclusion.
+	Phase          func(string)
 	Config         config.Config
 	Contract       project.Contract
 	Task           string
 	Argv           []string
+	HostEnv        map[string]string // nil uses this process's environment for standalone/legacy runs.
 	Lane           project.Lane
 	Timeout        time.Duration
 	Keep           bool
@@ -52,12 +58,15 @@ type Options struct {
 // Execute always creates an artifact directory and returns a Result. The caller
 // prints its final location on stderr, leaving stdout exclusively for the task.
 func Execute(ctx context.Context, o Options) (result Result) {
-	id := make([]byte, 8)
-	if _, err := rand.Read(id); err != nil {
-		result.Code, result.Err = exitcode.RunnerFailure, err
-		return
+	result.ID = o.ID
+	if result.ID == "" {
+		id := make([]byte, 8)
+		if _, err := rand.Read(id); err != nil {
+			result.Code, result.Err = exitcode.RunnerFailure, err
+			return
+		}
+		result.ID = hex.EncodeToString(id)
 	}
-	result.ID = hex.EncodeToString(id)
 	result.VM = "job-" + result.ID
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -65,7 +74,10 @@ func Execute(ctx context.Context, o Options) (result Result) {
 		return
 	}
 	base := filepath.Join(home, "Library", "Caches", "offscreen")
-	result.Artifacts = filepath.Join(base, "jobs", result.ID)
+	result.Artifacts = o.Artifacts
+	if result.Artifacts == "" {
+		result.Artifacts = filepath.Join(base, "jobs", result.ID)
+	}
 	if err := os.MkdirAll(result.Artifacts, 0o700); err != nil {
 		result.Code, result.Err = exitcode.RunnerFailure, err
 		return
@@ -86,9 +98,13 @@ func Execute(ctx context.Context, o Options) (result Result) {
 	guestWork := guestHome + "/" + work
 	guestOut := guestHome + "/" + out
 	guestCache := guestShares + "/cache"
+	hostEnv := o.HostEnv
+	if hostEnv == nil {
+		hostEnv = environ()
+	}
 	spec, err := project.Resolve(o.Contract, project.RunRequest{
 		Task: o.Task, Argv: o.Argv, Lane: o.Lane, JobID: result.ID,
-		OutDir: guestOut, CacheDir: guestCache, HostEnv: environ(),
+		OutDir: guestOut, CacheDir: guestCache, HostEnv: hostEnv,
 	})
 	if err != nil {
 		fail(err)
@@ -103,16 +119,24 @@ func Execute(ctx context.Context, o Options) (result Result) {
 		ctx, cancel = context.WithTimeout(ctx, o.Timeout)
 		defer cancel()
 	}
-	unlock, err := acquire(ctx, filepath.Join(base, "locks"), spec.Root, spec.Exclusive, o.Config.VMSlots, o.Config.LowMemoryThresholdGB)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			result.Code, result.Err = exitcode.QueueTimeout, err
-		} else {
-			fail(err)
+	if !o.SkipLock {
+		unlock, err := acquire(ctx, filepath.Join(base, "locks"), spec.Root, spec.Exclusive, o.Config.VMSlots, o.Config.LowMemoryThresholdGB)
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				result.Code, result.Err = exitcode.QueueTimeout, err
+			} else {
+				fail(err)
+			}
+			return
 		}
-		return
+		defer unlock()
 	}
-	defer unlock()
+	phase := func(s string) {
+		if o.Phase != nil {
+			o.Phase(s)
+		}
+	}
+	phase("preparing")
 	if err := ctx.Err(); err != nil {
 		fail(err)
 		return
@@ -120,6 +144,7 @@ func Execute(ctx context.Context, o Options) (result Result) {
 	if spec.Prepare != "" {
 		cmd := exec.CommandContext(ctx, "/bin/bash", "-o", "pipefail", "-c", spec.Prepare) // #nosec G204 -- project-owned contract explicitly supplies a host shell command
 		cmd.Dir, cmd.Stdout, cmd.Stderr = spec.Root, o.Stderr, o.Stderr
+		cmd.Env = hostCommandEnv(hostEnv)
 		if err := cmd.Run(); err != nil {
 			fail(fmt.Errorf("host prepare: %w", err))
 			return
@@ -208,9 +233,11 @@ func Execute(ctx context.Context, o Options) (result Result) {
 		err = guest.Stream(ctx, sshClient, prefix+guest.Command(spec.GuestSetup, nil), nil, o.Stdout, o.Stderr, false)
 	}
 	if err == nil {
+		phase("running")
 		err = guest.Stream(ctx, sshClient, prefix+guest.Command(spec.Command.Shell, spec.Command.Argv), o.Stdin, o.Stdout, o.Stderr, o.TTY)
 	}
 	result.Code, result.Err = commandExit(err)
+	phase("collecting")
 	// Collect while the clone is still running, even after the active context
 	// expires. Stream closes its SSH client on cancellation, so recovery must
 	// dial again under a separate, short-lived context.
@@ -261,6 +288,21 @@ func commandExit(err error) (int, error) {
 		return status.ExitStatus(), err
 	}
 	return exitcode.RunnerFailure, err
+}
+
+// hostCommandEnv builds a stable, per-job environment without changing the
+// daemon's own PATH (used to find Tart) or forwarding it to the guest.
+func hostCommandEnv(env map[string]string) []string {
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	result := make([]string, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, key+"="+env[key])
+	}
+	return result
 }
 
 func environ() map[string]string {
