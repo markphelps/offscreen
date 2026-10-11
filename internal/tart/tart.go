@@ -80,11 +80,21 @@ func (c Client) Delete(ctx context.Context, name string) error {
 
 // Start returns immediately while Tart runs; Wait must be called before deleting.
 func (c Client) Start(ctx context.Context, name string) (*exec.Cmd, error) {
+	return c.StartShared(ctx, name, nil)
+}
+
+// StartShared boots a headless VM with named Tart directory shares. Each entry
+// is a complete --dir=<name>:<path>[:ro] argument owned by the caller.
+func (c Client) StartShared(ctx context.Context, name string, shares []string) (*exec.Cmd, error) {
 	binary := c.Binary
 	if binary == "" {
 		binary = "tart"
 	}
-	cmd := exec.CommandContext(ctx, binary, "run", "--no-graphics", name)
+	args := []string{"run", "--no-graphics", name}
+	for _, share := range shares {
+		args = append(args, "--dir="+share)
+	}
+	cmd := exec.CommandContext(ctx, binary, args...)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start tart VM %q: %w", name, err)
 	}

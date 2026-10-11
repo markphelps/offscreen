@@ -41,7 +41,7 @@ func TestRunCommandPassesThroughRawCommand(t *testing.T) {
 	_, err = parser.Parse([]string{"run", "sample", "--", "sh", "-c", "echo hi; exit 3"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"sh", "-c", "echo hi; exit 3"}, cli.Run.Args)
-	require.ErrorContains(t, execute([]string{"run", "sample", "--", "sh", "-c", "echo hi; exit 3"}), "not implemented")
+	require.ErrorContains(t, execute([]string{"run", "sample", "--", "sh", "-c", "echo hi; exit 3"}), "not inside an offscreen project")
 }
 
 func TestCommandsAreAvailable(t *testing.T) {
