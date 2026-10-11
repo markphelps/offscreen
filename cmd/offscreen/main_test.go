@@ -52,8 +52,6 @@ func TestCommandsAreAvailable(t *testing.T) {
 		{"cancel", "job-1"},
 		{"pause"},
 		{"resume"},
-		{"image", "build"},
-		{"image", "refresh"},
 	} {
 		var cli CLI
 		parser, err := kong.New(&cli)
@@ -61,6 +59,17 @@ func TestCommandsAreAvailable(t *testing.T) {
 		ctx, err := parser.Parse(args)
 		require.NoError(t, err, "%v", args)
 		require.ErrorContains(t, ctx.Run(), "not implemented")
+	}
+}
+
+func TestImageCommandsParse(t *testing.T) {
+	for _, args := range [][]string{{"image", "build"}, {"image", "refresh"}} {
+		var cli CLI
+		parser, err := kong.New(&cli)
+		require.NoError(t, err)
+		ctx, err := parser.Parse(args)
+		require.NoError(t, err)
+		require.Contains(t, ctx.Command(), "image ")
 	}
 }
 
