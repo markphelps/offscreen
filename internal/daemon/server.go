@@ -29,16 +29,20 @@ import (
 )
 
 type worker struct {
-	job           Job
-	req           Request
-	contract      project.Contract
-	cancel        context.CancelFunc
-	inputR        *io.PipeReader
-	inputW        *io.PipeWriter
-	log           *os.File
-	done          chan struct{}
-	requeueReason string
-	mu            sync.Mutex
+	job      Job
+	req      Request
+	contract project.Contract
+	cancel   context.CancelFunc
+	inputR   *io.PipeReader
+	inputW   *io.PipeWriter
+	log      *os.File
+	done     chan struct{}
+	// retained holds admission after a kept VM's worker has exited. Both it
+	// and retainedCleanup are guarded by Server.mu, not worker.mu (log I/O).
+	retained        bool
+	retainedCleanup chan struct{}
+	requeueReason   string
+	mu              sync.Mutex
 }
 
 func (w *worker) write(kind byte, p []byte) (int, error) {
@@ -60,6 +64,7 @@ func (s streamWriter) Write(p []byte) (int, error) { return s.w.write(s.kind, p)
 type Server struct {
 	mu                     sync.Mutex
 	workers                sync.WaitGroup
+	retainedCleanups       sync.WaitGroup
 	db                     *sql.DB
 	lock                   *os.File
 	cfg                    config.Config
@@ -144,6 +149,7 @@ func (s *Server) Close() error {
 	}
 	s.mu.Unlock()
 	s.workers.Wait()
+	s.retainedCleanups.Wait()
 	err := s.db.Close()
 	_ = s.lock.Close()
 	return err
@@ -450,7 +456,14 @@ func (s *Server) admit() {
 		}
 		if w.job.Lane == project.LaneVM && s.vmRunning >= limit {
 			blocked[w.job.Lane] = true
-			if s.transition(w, "queued", "waiting for VM slot", 0) != nil {
+			reason := "waiting for VM slot"
+			for _, other := range s.jobs {
+				if other.retained {
+					reason = "waiting for VM slot (retained VM; cancel job " + other.job.ID + " to release it)"
+					break
+				}
+			}
+			if s.transition(w, "queued", reason, 0) != nil {
 				return
 			}
 			continue
@@ -486,22 +499,28 @@ func (s *Server) admit() {
 				continue
 			}
 		}
-		busy := false
+		busy, retained := false, false
 		for _, other := range s.jobs {
-			if other == w || other.job.Project != w.job.Project || other.done == nil {
+			if other == w || other.job.Project != w.job.Project || other.done == nil || (!w.contract.Exclusive && !other.contract.Exclusive) {
+				continue
+			}
+			if other.retained {
+				busy, retained = true, true
 				continue
 			}
 			select {
 			case <-other.done:
 			default:
-				if w.contract.Exclusive || other.contract.Exclusive {
-					busy = true
-				}
+				busy = true
 			}
 		}
 		if busy {
 			blocked[w.job.Lane] = true
-			if s.transition(w, "queued", "waiting for exclusive project", 0) != nil {
+			reason := "waiting for exclusive project"
+			if retained {
+				reason += " (retained VM; cancel its job to release it)"
+			}
+			if s.transition(w, "queued", reason, 0) != nil {
 				return
 			}
 			continue
@@ -525,18 +544,29 @@ func (s *Server) admit() {
 }
 
 func (s *Server) execute(ctx context.Context, w *worker) {
-	defer s.workers.Done()
 	done := w.done
-	defer close(done)
+	// Cancel observes done only after every execution defer (including the
+	// admission transfer and log close) has completed.
+	defer func() {
+		s.workers.Done()
+		close(done)
+	}()
 	if !w.job.Deadline.IsZero() {
 		var stop context.CancelFunc
 		ctx, stop = context.WithDeadline(ctx, w.job.Deadline)
 		defer stop()
 	}
+	// This defer runs before done is closed. A kept clone transfers the VM
+	// lease to retained cleanup; cancellation can only clean it after done.
+	retainSlot := false
 	defer func() {
 		s.mu.Lock()
 		if w.job.Lane == project.LaneVM {
-			s.vmRunning--
+			if retainSlot {
+				w.retained = true
+			} else {
+				s.vmRunning--
+			}
 		} else {
 			s.hostRunning--
 		}
@@ -575,6 +605,9 @@ func (s *Server) execute(ctx context.Context, w *worker) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Capture the actual executor result even if cancel raced publication.
+	// Only this defer decides whether to release the execution's slot.
+	retainSlot = w.job.Lane == project.LaneVM && result.Kept
 	if w.job.State == "cancelled" {
 		w.requeueReason = ""
 		return
@@ -699,6 +732,10 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
+	// One budget covers worker shutdown, any concurrent cleanup already in
+	// progress, and this request's Tart cleanup/retry.
+	ctx, cancel := context.WithTimeout(r.Context(), 130*time.Second)
+	defer cancel()
 	s.mu.Lock()
 	job, ok := s.jobs[r.PathValue("id")]
 	if !ok {
@@ -726,17 +763,96 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 	if done != nil {
 		select {
 		case <-done:
-		case <-time.After(130 * time.Second):
-			bad(w, 504, errors.New("VM cleanup timed out"))
-			return
-		case <-r.Context().Done():
+		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				bad(w, 504, errors.New("VM cleanup timed out"))
+			}
 			return
 		}
+	}
+	if err := s.cleanupRetained(ctx, job); err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			bad(w, 504, errors.New("VM cleanup timed out; retry cancel to release its slot"))
+			return
+		}
+		bad(w, 500, fmt.Errorf("retained VM cleanup: %w; retry cancel to release its slot", err))
+		return
 	}
 	s.mu.Lock()
 	record := job.job
 	s.mu.Unlock()
 	respond(w, record)
+}
+
+// cleanupRetained serializes cancels for one owned clone, without holding the
+// admission lock during Tart operations. A failed stop/delete retains both the
+// VM slot and the project's exclusion until a later cancel succeeds.
+func (s *Server) cleanupRetained(ctx context.Context, job *worker) error {
+	for {
+		s.mu.Lock()
+		if !job.retained {
+			s.mu.Unlock()
+			return nil
+		}
+		// Close cancels s.ctx before waiting. Admission of cleanup and its
+		// wait-group registration share this lock, so no cleanup can begin
+		// after shutdown has started waiting or released the singleton lock.
+		if err := s.ctx.Err(); err != nil {
+			s.mu.Unlock()
+			return err
+		}
+		if pending := job.retainedCleanup; pending != nil {
+			s.mu.Unlock()
+			select {
+			case <-pending:
+				continue
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		pending := make(chan struct{})
+		job.retainedCleanup = pending
+		s.retainedCleanups.Add(1)
+		defer s.retainedCleanups.Done()
+		s.mu.Unlock()
+
+		// Never trust an executor-supplied VM name or touch another job's VM.
+		// List first: an operator may have stopped or removed this clone.
+		cleanup, cancel := context.WithTimeout(ctx, 90*time.Second)
+		err := s.deleteRetained(cleanup, "job-"+job.job.ID)
+		cancel()
+		s.mu.Lock()
+		if err == nil {
+			job.retained = false
+			s.vmRunning--
+		}
+		job.retainedCleanup = nil
+		close(pending)
+		s.mu.Unlock()
+		return err
+	}
+}
+
+func (s *Server) deleteRetained(ctx context.Context, name string) error {
+	vms, err := s.tart.List(ctx)
+	if err != nil {
+		return err
+	}
+	for _, vm := range vms {
+		if vm.Name != name {
+			continue
+		}
+		if vm.Running {
+			if err := s.tart.Stop(ctx, name); err != nil {
+				return err
+			}
+		}
+		return s.tart.Delete(ctx, name)
+	}
+	return nil // already deleted by the operator
 }
 
 func (s *Server) handleInput(w http.ResponseWriter, r *http.Request) {
@@ -771,7 +887,9 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		bad(w, 500, errors.New("stream unavailable"))
 		return
 	}
+	s.mu.Lock()
 	path := filepath.Join(job.job.Artifacts, "stream.bin")
+	s.mu.Unlock()
 	offset := int64(0)
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
