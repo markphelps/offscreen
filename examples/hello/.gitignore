@@ -1,0 +1,5 @@
+.build/
+*.xcresult/
+Hello.xcodeproj/project.xcworkspace/xcuserdata/
+Hello.xcodeproj/xcuserdata/
+.DS_Store

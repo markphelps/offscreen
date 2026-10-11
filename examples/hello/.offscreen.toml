@@ -1,0 +1,13 @@
+project = "hello"
+
+[prepare]
+run = "xcodebuild -project Hello.xcodeproj -scheme Hello -configuration Debug -destination 'platform=macOS' -derivedDataPath .build build"
+share = [".build/Build/Products/Debug/Hello.app"]
+
+[tasks.launch]
+lane = "vm"
+run = "sh scripts/launch.sh"
+
+[tasks.test-ui]
+lane = "vm"
+run = "sh scripts/test-ui.sh"
