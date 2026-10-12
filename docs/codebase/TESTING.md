@@ -63,7 +63,7 @@ Guardian tests re-execute the coverage-instrumented test binary, and `guardianMa
 
 ### 5) Coverage and Quality Signals
 
-No percentage threshold is configured in the inspected `mise.toml` or `.github/workflows/ci.yml`. CI runs on `macos-15` for pushes and pull requests in three jobs: `go` (`mise run lint`, `mise run test`), `helper` (`mise run helper:test` with `DEVELOPER_DIR` set to Xcode 26.3), and `shellcheck` (`mise run shellcheck`). This closes C05. There are no coverage, race, or build steps, so the C04 fix is only exercised by local `-cover` runs. The hosted Xcode 26.3 path has not yet been observed on a CI run. Real Tart and XCUITest checks are explicitly local because GitHub-hosted macOS runners do not support Tart VMs (`.github/workflows/ci.yml`; `CONTRIBUTING.md`).
+No percentage threshold is configured in the inspected `mise.toml` or `.github/workflows/ci.yml`. CI runs for pushes and pull requests in three jobs: `go` on `macos-15` (`mise run lint`, `mise run test`, and `go test ./internal/run -cover -count=1`, which guards the C04 fix), `helper` on `macos-26` (`mise run helper:test` with that image's default Xcode), and `shellcheck` on `macos-15` (`mise run shellcheck`). This closes C05. There are no race or build steps, and whole-suite coverage remains a local check. The `macos-26` helper job has not yet been observed on a hosted run. Real Tart and XCUITest checks are explicitly local because GitHub-hosted macOS runners do not support Tart VMs (`.github/workflows/ci.yml`; `CONTRIBUTING.md`).
 
 Verification at `4e31a32` on Go 1.27.0 darwin/arm64 (earlier results noted):
 

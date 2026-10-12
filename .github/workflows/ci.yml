@@ -16,14 +16,15 @@ jobs:
         run: mise run lint
       - name: Unit tests
         run: mise run test
+      # Guards the C04 fix: guardian subprocesses must keep coverage warnings out of task output.
+      - name: Coverage-instrumented guardian tests
+        run: go test ./internal/run -cover -count=1
 
   helper:
-    runs-on: macos-15
+    # Package.swift needs Swift 6.2; macos-26's default Xcode provides it.
+    runs-on: macos-26
     permissions:
       contents: read
-    env:
-      # Package.swift needs Swift 6.2; the image's default Xcode 16.4 has Swift 6.1.
-      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v3

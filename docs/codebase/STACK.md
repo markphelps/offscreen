@@ -58,7 +58,7 @@ mise run helper:test   # swift build + swift test for helper/
 mise run shellcheck    # pinned ShellCheck on every tracked *.sh
 ```
 
-Formatting and modernize tasks can edit source (`CONTRIBUTING.md`). CI on `macos-15` runs lint, tests, `helper:test` (with Xcode 26.3 selected through `DEVELOPER_DIR`), and `shellcheck`; it does not run coverage (`.github/workflows/ci.yml`). Real VM checks are described in [TESTING.md](TESTING.md).
+Formatting and modernize tasks can edit source (`CONTRIBUTING.md`). CI runs lint, tests, a coverage-instrumented `./internal/run` test, and `shellcheck` on `macos-15`, and `helper:test` on `macos-26` for its default Swift 6.2+ Xcode (`.github/workflows/ci.yml`). Real VM checks are described in [TESTING.md](TESTING.md).
 
 ### 5) Environment and Config
 

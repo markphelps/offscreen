@@ -27,7 +27,7 @@ Use `mise run go:modernize` to apply modern Go idioms. Both formatting and moder
 
 [TODO] No dedicated Swift formatter/linter configuration was identified in the tracked configuration inventory. Swift compilation/testing is the helper check: `mise run helper:test` runs `swift build` and `swift test` with `--package-path helper`. It never bundles, installs, launches the helper or requests permissions (`helper/Package.swift`; `mise.toml`; `CONTRIBUTING.md`).
 
-CI (`.github/workflows/ci.yml`, `macos-15`) enforces these gates in separate jobs: Go lint and tests (`mise run lint`, `mise run test`), the Swift helper (`mise run helper:test`, with `DEVELOPER_DIR` pointing at Xcode 26.3 because `Package.swift` needs Swift 6.2 and the image default is Xcode 16.4), and `mise run shellcheck`. Tart VM, Hello XCUITest and human permission/physical-input checks stay local (`CONTRIBUTING.md`).
+CI (`.github/workflows/ci.yml`) enforces these gates in separate jobs: Go lint and tests on `macos-15` (`mise run lint`, `mise run test`, plus `go test ./internal/run -cover -count=1` to guard coverage-instrumented guardians), the Swift helper on `macos-26` (`mise run helper:test`; that image's default Xcode provides the Swift 6.2 `Package.swift` needs), and `mise run shellcheck` on `macos-15`. Tart VM, Hello XCUITest and human permission/physical-input checks stay local (`CONTRIBUTING.md`).
 
 ### 3) Import and Module Conventions
 
@@ -47,7 +47,7 @@ Public symbols use ordinary Go exports, with comments on shared package function
 
 Go tests are co-located `_test.go` files using standard `testing` plus Testify `require`; source changes should include behavioral tests (`AGENTS.md`; `CONTRIBUTING.md`; `internal/project/project_test.go`). Test inputs use temporary files/directories and explicit environment changes rather than app-specific production settings (`internal/run/host_test.go`). Guardian tests enter subprocess mode through `TestMain`, not package initialization (`internal/run/process_test.go`).
 
-Swift tests are in `helper/Tests/OffscreenHelperTests/HelperTests.swift`; Hello UI tests are separate under `examples/hello/HelloUITests/`. No numerical coverage threshold is configured in `mise.toml` or `.github/workflows/ci.yml`, and CI does not run coverage. `go test ./... -cover` passes since the C04 repair; run it before changing guardian or subprocess code. Daemon tests use isolated SQLite/socket state and a controlled clock for expiry (`internal/daemon/expiry_test.go`), never the user's installed daemon. Coverage commands and hardware checks are documented in [TESTING.md](TESTING.md).
+Swift tests are in `helper/Tests/OffscreenHelperTests/HelperTests.swift`; Hello UI tests are separate under `examples/hello/HelloUITests/`. No numerical coverage threshold is configured in `mise.toml` or `.github/workflows/ci.yml`, and CI runs coverage only for `./internal/run` (to guard the C04 fix). `go test ./... -cover` passes since the C04 repair; run it before changing guardian or subprocess code. Daemon tests use isolated SQLite/socket state and a controlled clock for expiry (`internal/daemon/expiry_test.go`), never the user's installed daemon. Coverage commands and hardware checks are documented in [TESTING.md](TESTING.md).
 
 ### 6) Evidence
 
