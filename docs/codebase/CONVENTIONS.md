@@ -23,13 +23,11 @@ Go visibility is capitalization-based; representative internal functions are not
 
 The explicitly enabled linters are asciicheck, bidichk, durationcheck, errorlint, gocritic, gosec, misspell, modernize, nilerr, staticcheck, testifylint, unconvert, and unparam. Gosec excludes G115; generated-code exclusions are lax and common false-positive presets are enabled (`.golangci.yml`). Source-level `#nosec` comments explain deliberate project-command execution and owner-selected path use (`internal/run/run.go`).
 
-Use `mise run go:modernize` to apply modern Go idioms. Both formatting and modernization may modify files (`mise.toml`; `CONTRIBUTING.md`). Shell scripts must pass ShellCheck; the documented invocation is:
+Use `mise run go:modernize` to apply modern Go idioms. Both formatting and modernization may modify files (`mise.toml`; `CONTRIBUTING.md`). Shell scripts must pass the pinned ShellCheck 0.11.0. `mise run shellcheck` checks every tracked `*.sh` file (`git ls-files -z '*.sh' | xargs -0 shellcheck`), so new scripts are covered without editing a path list (`mise.toml`).
 
-```sh
-shellcheck helper/scripts/*.sh examples/hello/scripts/*.sh internal/image/scripts/*.sh
-```
+[TODO] No dedicated Swift formatter/linter configuration was identified in the tracked configuration inventory. Swift compilation/testing is the helper check: `mise run helper:test` runs `swift build` and `swift test` with `--package-path helper`. It never bundles, installs, launches the helper or requests permissions (`helper/Package.swift`; `mise.toml`; `CONTRIBUTING.md`).
 
-[TODO] No dedicated Swift formatter/linter configuration was identified in the tracked configuration inventory. Swift compilation/testing remains the configured helper check (`helper/Package.swift`; `CONTRIBUTING.md`).
+CI (`.github/workflows/ci.yml`, `macos-15`) enforces these gates in separate jobs: Go lint and tests (`mise run lint`, `mise run test`), the Swift helper (`mise run helper:test`, with `DEVELOPER_DIR` pointing at Xcode 26.3 because `Package.swift` needs Swift 6.2 and the image default is Xcode 16.4), and `mise run shellcheck`. Tart VM, Hello XCUITest and human permission/physical-input checks stay local (`CONTRIBUTING.md`).
 
 ### 3) Import and Module Conventions
 
@@ -57,6 +55,7 @@ Swift tests are in `helper/Tests/OffscreenHelperTests/HelperTests.swift`; Hello 
 - `CONTRIBUTING.md`
 - `.golangci.yml`
 - `mise.toml`
+- `.github/workflows/ci.yml`
 - `cmd/offscreen/main.go`
 - `internal/logging/logging.go`
 - `internal/project/project.go`
