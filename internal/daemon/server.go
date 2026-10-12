@@ -175,8 +175,16 @@ func (s *Server) Close() error {
 	return err
 }
 
+// save persists job with the worker's request. A terminal record never keeps
+// the caller's environment: execution and any requeue decision are settled, and
+// retained VM cleanup needs only the job ID. Older SQLite pages or backups may
+// still hold earlier snapshots; this is logical data minimization, not erasure.
 func (s *Server) save(w *worker, job Job) error {
-	b, err := json.Marshal(w.req)
+	req := w.req
+	if Terminal(job.State) {
+		req.HostEnv = nil
+	}
+	b, err := json.Marshal(req)
 	if err != nil {
 		return err
 	}
@@ -184,7 +192,7 @@ func (s *Server) save(w *worker, job Job) error {
 	if w.contract.Exclusive {
 		exclusive = 1
 	}
-	_, err = s.db.Exec(`INSERT INTO jobs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,code=excluded.code,reason=excluded.reason,updated=excluded.updated`,
+	_, err = s.db.Exec(`INSERT INTO jobs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,code=excluded.code,reason=excluded.reason,updated=excluded.updated,request=excluded.request`,
 		job.ID, job.Project, job.Root, job.Task, job.Lane, job.State, job.Code, job.Artifacts, job.Reason,
 		job.Created.Format(time.RFC3339Nano), job.Updated.Format(time.RFC3339Nano), job.Deadline.Format(time.RFC3339Nano), string(b), exclusive)
 	return err
@@ -205,6 +213,11 @@ func (s *Server) transition(w *worker, state, reason string, code int) error {
 		return s.failLocked(fmt.Errorf("persist job %s transition to %s: %w", w.job.ID, state, err))
 	}
 	w.job = candidate
+	if Terminal(state) {
+		// Executors receive their own Request copy, so dropping this reference
+		// never mutates a map an active executor may still read.
+		w.req.HostEnv = nil
+	}
 	if Terminal(state) && w.inputR != nil {
 		// Queued timeouts never execute a worker, so terminal transitions
 		// must also release any attached input request waiting on its pipe.
@@ -276,6 +289,18 @@ func (s *Server) sweep() error {
 				return err
 			}
 		}
+	}
+	// Records written before terminal scrubbing still carry the caller's
+	// environment. Rewrite them before serving; startup fails closed if the
+	// store rejects the write.
+	for _, w := range s.jobs {
+		if !Terminal(w.job.State) || len(w.req.HostEnv) == 0 {
+			continue
+		}
+		if err := s.save(w, w.job); err != nil {
+			return fmt.Errorf("scrub caller environment from terminal job %s: %w", w.job.ID, err)
+		}
+		w.req.HostEnv = nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -647,13 +672,15 @@ func (s *Server) admit() {
 		w.cancel = cancel
 		w.done = make(chan struct{})
 		s.workers.Add(1)
-		go s.execute(ctx, w)
+		// The executor reads its own copy of the request; terminal transitions
+		// may clear the worker's caller environment while it is still running.
+		go s.execute(ctx, w, w.req)
 	}
 	// Terminal history remains in SQLite, not in the admission list.
 	s.order = slices.DeleteFunc(s.order, func(id string) bool { return s.jobs[id].job.State != "queued" })
 }
 
-func (s *Server) execute(ctx context.Context, w *worker) {
+func (s *Server) execute(ctx context.Context, w *worker, req Request) {
 	done := w.done
 	// Cancel observes done only after every execution defer (including the
 	// admission transfer and log close) has completed.
@@ -714,9 +741,9 @@ func (s *Server) execute(ctx context.Context, w *worker) {
 	var result run.Result
 	switch {
 	case w.job.Lane == project.LaneVM:
-		result = s.executor(ctx, run.Options{ID: w.job.ID, Artifacts: w.job.Artifacts, SkipLock: true, Config: cfg, Contract: w.contract, Task: w.req.Task, Argv: w.req.Argv, Lane: w.job.Lane, HostEnv: w.req.HostEnv, Keep: w.req.Keep, Stdin: input, Stdout: streamWriter{w, 'o'}, Stderr: streamWriter{w, 'e'}, TTY: w.req.TTY, Phase: phase})
+		result = s.executor(ctx, run.Options{ID: w.job.ID, Artifacts: w.job.Artifacts, SkipLock: true, Config: cfg, Contract: w.contract, Task: req.Task, Argv: req.Argv, Lane: w.job.Lane, HostEnv: req.HostEnv, Keep: req.Keep, Stdin: input, Stdout: streamWriter{w, 'o'}, Stderr: streamWriter{w, 'e'}, TTY: req.TTY, Phase: phase})
 	case s.hostExecute != nil:
-		result = s.hostExecute(ctx, run.Options{ID: w.job.ID, Artifacts: w.job.Artifacts, Config: cfg, Contract: w.contract, Task: w.req.Task, Argv: w.req.Argv, Lane: w.job.Lane, HostEnv: w.req.HostEnv, Stdin: input, Stdout: streamWriter{w, 'o'}, Stderr: streamWriter{w, 'e'}, TTY: w.req.TTY, Phase: phase})
+		result = s.hostExecute(ctx, run.Options{ID: w.job.ID, Artifacts: w.job.Artifacts, Config: cfg, Contract: w.contract, Task: req.Task, Argv: req.Argv, Lane: w.job.Lane, HostEnv: req.HostEnv, Stdin: input, Stdout: streamWriter{w, 'o'}, Stderr: streamWriter{w, 'e'}, TTY: req.TTY, Phase: phase})
 	default:
 		result = run.Result{Code: exitcode.RunnerFailure, Err: errors.New("host lane executor unavailable")}
 	}
