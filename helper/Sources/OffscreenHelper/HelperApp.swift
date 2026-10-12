@@ -183,6 +183,16 @@ enum CountdownVisibility {
     }
 }
 
+enum CountdownPlacement {
+    static func frame(panelSize: NSSize, visibleFrame: NSRect) -> NSRect {
+        let width = min(panelSize.width, visibleFrame.width)
+        let height = min(panelSize.height, visibleFrame.height)
+        return NSRect(x: visibleFrame.midX - width / 2,
+                      y: max(visibleFrame.minY, visibleFrame.maxY - height - 16),
+                      width: width, height: height)
+    }
+}
+
 @MainActor private final class CountdownPanel {
     let jobID: String
     private let panel: NonactivatingCountdownPanel
@@ -207,6 +217,7 @@ enum CountdownVisibility {
         detail.textColor = .secondaryLabelColor
         detail.lineBreakMode = .byWordWrapping
         detail.maximumNumberOfLines = 2
+        detail.preferredMaxLayoutWidth = 268
         let button = CountdownButton(title: "Not now (30 minutes)", target: action,
                                      action: #selector(CountdownAction.notNow))
         button.bezelStyle = .rounded
@@ -231,8 +242,13 @@ enum CountdownVisibility {
         label.stringValue = seconds.map { "Host job starts in \($0) seconds" } ?? "Host job waiting for idle desktop"
         detail.stringValue = error ?? "Use Not now to pause host jobs before they take the screen."
         if !panel.isVisible {
-            let frame = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame ?? .zero
-            panel.setFrameTopLeftPoint(NSPoint(x: frame.maxX - panel.frame.width - 16, y: frame.maxY - 16))
+            let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }
+                ?? NSScreen.main ?? NSScreen.screens.first
+            if let screen {
+                panel.layoutIfNeeded()
+                panel.setFrame(CountdownPlacement.frame(panelSize: panel.frame.size,
+                                                         visibleFrame: screen.visibleFrame), display: true)
+            }
             panel.orderFrontRegardless() // no activation or key-window request
         }
     }
