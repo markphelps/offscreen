@@ -29,6 +29,7 @@ Swift helper -> desktop snapshot / actions -> daemon host policy
 5. Host admission checks fresh helper observations, permissions/tap, unlocked/awake session, idle camera/microphone, idle threshold, and pause state, then gives a ten-second countdown. `ExecuteHost` runs preparation followed by the task in the real checkout with the caller environment and four task variables. It skips guest setup and VM copies (`internal/daemon/host.go`; `internal/run/host.go`).
 6. Workers append output frames to `stream.bin`; HTTP streaming preserves stdout/stderr identity and follows until cleanup completes. VM output is collected and the clone deleted unless a failed started VM is retained. Terminal status carries code/reason/artifact path back to the CLI; attached runs print job/artifact identity on stderr (`internal/daemon/server.go`; `internal/daemon/protocol.go`; `internal/daemon/client.go`; `cmd/offscreen/main.go`).
 7. `offscreen prune --older-than <age> --dry-run|--yes` asks the daemon (`POST /prune`) to run its expiry engine, `Server.Prune`, with a cutoff from the daemon clock. Under the admission lock it selects terminal jobs completed before the cutoff whose worker has returned and that hold no retained clone or cleanup; Tart must show no `job-<id>` clone left. Deletion removes the ID-derived job directory, then the row, then the memory entry, rechecking eligibility under the lock first. Partial failures stay listed with their original completion time and are retried by the next run; they do not stop the daemon. Persistent project caches and images are outside the engine (`internal/daemon/prune.go`; `cmd/offscreen/main.go`, `PruneCmd`).
+8. Automatic expiry drives the same engine with cutoff = daemon clock minus `job_retention` (default `168h`). `open` runs one pass after `sweep` succeeds and before scheduling or serving; `maintain` then runs one pass per hour on a single ticker goroutine until the daemon context ends, and `Close` waits for it. Engine errors (for example an unlistable Tart inventory) and per-job failures are logged and retried on the next pass; they never stop the daemon or rewrite a completion time (`internal/daemon/expiry.go`; `internal/daemon/server.go`, `open` / `Close`).
 
 ### 3) Layer/Module Responsibilities
 
@@ -69,7 +70,7 @@ Restart fails active jobs and queued attached jobs; detached queued jobs may res
 - Automatic return detection depends on a PID-zero filter that each installation enables after its own probe. The helper defaults it off, and the menu's manual return works either way. The filter separated physical from injected input on the maintainer's Mac during acceptance; that does not prove other hardware or a given installation's settings (C01; `helper/Sources/OffscreenHelper/InputFilter.swift`; `helper/README.md`).
 - Host take-back/requeue restarts preparation and the task with closed stdin. Task side effects need to tolerate interruption/re-execution; input cannot be replayed (`internal/daemon/server.go`; `DAEMON.md`).
 - A leftover guardian marker deliberately blocks restart until manual inspection/removal (C03, fail-closed by design). Tart list/cleanup failure during the shared startup sweep also prevents daemon startup; Tart is a prerequisite for both lanes (C17) (`internal/run/guardian_darwin.go`; `internal/daemon/server.go`; `DAEMON.md`).
-- Retained VMs (C06) and FIFO lane-head waiting (C14) can delay unrelated projects; both are intentional. Terminal records no longer keep the caller environment (C02). Completed-job history, logs and artifacts can be removed with the previewable `prune` command through the shared expiry engine; automatic scheduled expiry is a planned follow-up (C13). Deleted rows free SQLite pages for reuse without shrinking the file (`internal/daemon/server.go`; `internal/daemon/prune.go`; see [CONCERNS.md](CONCERNS.md)).
+- Retained VMs (C06) and FIFO lane-head waiting (C14) can delay unrelated projects; both are intentional. Terminal records no longer keep the caller environment (C02). Completed-job history, logs and artifacts expire automatically after `job_retention` (default seven days) at startup and hourly, and can be removed earlier with the previewable `prune` command; both use the shared expiry engine (C13). Protected jobs (queued/active, retained `--keep`, unconfirmed VM cleanup) are kept regardless of age, so history is bounded only for completed, cleaned-up work. Deleted rows free SQLite pages for reuse without shrinking the file (`internal/daemon/server.go`; `internal/daemon/prune.go`; see [CONCERNS.md](CONCERNS.md)).
 
 ### 6) Evidence
 
@@ -80,6 +81,7 @@ Restart fails active jobs and queued attached jobs; detached queued jobs may res
 - `internal/daemon/host.go`
 - `internal/daemon/protocol.go`
 - `internal/daemon/prune.go`
+- `internal/daemon/expiry.go`
 - `internal/run/run.go`
 - `internal/run/process.go`
 - `helper/Sources/OffscreenHelper/HelperApp.swift`

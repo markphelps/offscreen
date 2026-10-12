@@ -36,6 +36,13 @@ func fixture(t *testing.T, executor func(context.Context, run.Options) run.Resul
 	cfg.LowMemoryThresholdGB = 8
 	s, err := open(cfg, executor, tart.Client{Binary: binary}, memory)
 	require.NoError(t, err)
+	client := serveFixture(t, s)
+	return s, client, root
+}
+
+// serveFixture serves an opened server on its isolated socket until cleanup.
+func serveFixture(t *testing.T, s *Server) Client {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { _ = s.Serve(ctx); close(done) }()
@@ -45,7 +52,7 @@ func fixture(t *testing.T, executor func(context.Context, run.Options) run.Resul
 	require.Eventually(t, func() bool { _, err := os.Stat(socket); return err == nil }, time.Second, 10*time.Millisecond)
 	client, err := Dial()
 	require.NoError(t, err)
-	return s, client, root
+	return client
 }
 
 func submitFixture(t *testing.T, c Client, root string, req Request) Job {

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -140,4 +141,36 @@ func TestSetCurrentImageInsertsBeforeImageTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "new", cfg.CurrentImage)
 	require.Equal(t, "1200x800", cfg.Image.Display)
+}
+
+func TestSetCurrentImagePreservesJobRetention(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	const original = "# expire after two days\njob_retention = '48h' # keep the quoting\nfuture_setting = 42\n[image]\ndisplay = '1200x800'\n"
+	require.NoError(t, os.WriteFile(path, []byte(original), 0o600))
+	require.NoError(t, SetCurrentImageFile(path, "new"))
+	contents, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "# expire after two days\njob_retention = '48h' # keep the quoting\nfuture_setting = 42\ncurrent_image = \"new\"\n[image]\ndisplay = '1200x800'\n", string(contents))
+	cfg, err := LoadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, 48*time.Hour, cfg.JobRetention)
+	require.Equal(t, "new", cfg.CurrentImage)
+}
+
+func TestSetCurrentImageRefusesInvalidJobRetention(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	const original = "job_retention = '0s'\n"
+	require.NoError(t, os.WriteFile(path, []byte(original), 0o600))
+	require.ErrorContains(t, SetCurrentImageFile(path, "new"), "job_retention")
+	contents, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, original, string(contents), "a malformed config must not be rewritten")
+}
+
+func TestSetCurrentImageNewFileWritesDefaultRetention(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, SetCurrentImageFile(path, "new"))
+	cfg, err := LoadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, DefaultJobRetention, cfg.JobRetention)
 }

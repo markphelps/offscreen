@@ -87,13 +87,25 @@ type Server struct {
 	// derive prune cutoffs and is replaceable in tests.
 	pruneMu sync.Mutex
 	now     func() time.Time
+	// maintenance tracks the periodic expiry goroutine; onExpiry (guarded by
+	// mu) observes each automatic pass in tests.
+	maintenance sync.WaitGroup
+	onExpiry    func(PruneReport, error)
 }
+
+// wallClock is the clock new servers use to derive expiry cutoffs. Tests
+// replace it to control the startup pass; Server.now controls later passes.
+var wallClock = time.Now
 
 func Open(cfg config.Config) (*Server, error) {
 	return open(cfg, run.Execute, tart.Client{}, run.AvailableMemory)
 }
 
 func open(cfg config.Config, executor func(context.Context, run.Options) run.Result, vm tart.Client, memory func() (uint64, error)) (*Server, error) {
+	// A nonpositive retention would disable cleanup; config loading rejects it.
+	if cfg.JobRetention <= 0 {
+		return nil, fmt.Errorf("job retention must be a positive duration, got %s", cfg.JobRetention)
+	}
 	dir, err := StateDir()
 	if err != nil {
 		return nil, err
@@ -143,7 +155,7 @@ func open(cfg config.Config, executor func(context.Context, run.Options) run.Res
 		return nil, err
 	}
 	ctx, stop := context.WithCancel(context.Background())
-	s := &Server{db: db, lock: lock, cfg: cfg, executor: executor, tart: vm, memory: memory, jobs: make(map[string]*worker), ctx: ctx, stop: stop, fatal: make(chan struct{}), now: time.Now}
+	s := &Server{db: db, lock: lock, cfg: cfg, executor: executor, tart: vm, memory: memory, jobs: make(map[string]*worker), ctx: ctx, stop: stop, fatal: make(chan struct{}), now: wallClock}
 	if err := s.loadHostPolicy(); err != nil {
 		stop()
 		_ = db.Close()
@@ -156,6 +168,11 @@ func open(cfg config.Config, executor func(context.Context, run.Options) run.Res
 		_ = lock.Close()
 		return nil, err
 	}
+	// Recovery and terminal scrubbing succeeded; expire old history before
+	// admitting work or serving requests, then keep it bounded periodically.
+	s.expire(s.ctx, "startup")
+	s.maintenance.Add(1)
+	go s.maintain(expiryInterval)
 	go s.schedule()
 	return s, nil
 }
@@ -174,6 +191,7 @@ func (s *Server) Close() error {
 	s.mu.Unlock()
 	s.workers.Wait()
 	s.retainedCleanups.Wait()
+	s.maintenance.Wait()
 	err := s.db.Close()
 	_ = s.lock.Close()
 	return err
