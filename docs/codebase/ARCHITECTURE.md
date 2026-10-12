@@ -64,11 +64,11 @@ Restart fails active jobs and queued attached jobs; detached queued jobs may res
 
 ### 5) Known Architectural Risks
 
-- Owner-only socket access is the local trust boundary. Same-user processes can submit arbitrary contracts or helper snapshots; there is no application-identity authentication. Host preparation executes on the real Mac even for VM jobs (`internal/daemon/server.go`; `internal/run/run.go`).
-- Automatic return detection depends on a human-verified PID-zero filter. The helper defaults it off; helper readiness does not prove input discrimination (`helper/Sources/OffscreenHelper/InputFilter.swift`; `helper/README.md`).
+- Owner-only socket access is the intended local trust boundary (C12). Same-user processes can submit arbitrary contracts or helper snapshots; no application-identity authentication is promised. Host preparation executes on the real Mac even for VM jobs, as the project contract specifies (C11) (`internal/daemon/server.go`; `internal/run/run.go`; `docs/config.md`).
+- Automatic return detection depends on a PID-zero filter that each installation enables after its own probe. The helper defaults it off, and the menu's manual return works either way. The filter separated physical from injected input on the maintainer's Mac during acceptance; that does not prove other hardware or a given installation's settings (C01; `helper/Sources/OffscreenHelper/InputFilter.swift`; `helper/README.md`).
 - Host take-back/requeue restarts preparation and the task with closed stdin. Task side effects need to tolerate interruption/re-execution; input cannot be replayed (`internal/daemon/server.go`; `DAEMON.md`).
-- A leftover guardian marker deliberately blocks restart until manual inspection/removal. Tart list/cleanup failure during the shared startup sweep also prevents daemon startup (`internal/run/guardian_darwin.go`; `internal/daemon/server.go`; `DAEMON.md`).
-- Retained VMs and a blocked lane head can delay unrelated projects. History/log/artifact retention has no pruning path in the mapped daemon (`internal/daemon/server.go`; see [CONCERNS.md](CONCERNS.md)).
+- A leftover guardian marker deliberately blocks restart until manual inspection/removal (C03, fail-closed by design). Tart list/cleanup failure during the shared startup sweep also prevents daemon startup; Tart is a prerequisite for both lanes (C17) (`internal/run/guardian_darwin.go`; `internal/daemon/server.go`; `DAEMON.md`).
+- Retained VMs (C06) and FIFO lane-head waiting (C14) can delay unrelated projects; both are intentional. History/log/artifact retention has no pruning path at this checkout, and terminal records keep the full caller environment; both have planned repairs (C13, C02) (`internal/daemon/server.go`; see [CONCERNS.md](CONCERNS.md)).
 
 ### 6) Evidence
 

@@ -19,7 +19,7 @@ go test ./internal/run -run 'TestExecuteHostPrepareEnvironmentArgvAndExit|TestGu
 # Separate native helper suite, from repository root
 (cd helper && swift test)
 
-# Coverage diagnostic: currently fails two guardian stderr assertions
+# Coverage diagnostic: fails two guardian stderr assertions at this checkout (C04, planned repair)
 go test ./... -cover
 
 # Optional real image smoke check; choose an existing image and isolated config
@@ -46,19 +46,19 @@ Swift tests live under `helper/Tests/OffscreenHelperTests/`; Hello UI tests unde
 | Local integration | Yes | SQLite/socket queue, output streaming, guardian process lifecycle | `internal/daemon/server_test.go`; `internal/daemon/retained_test.go`; `internal/run/process_test.go` |
 | VM smoke | Opt-in | Real guest GUI, Automation Mode, display/capture size, setup persistence | `TestImageSmoke` skips unless `OFFSCREEN_IMAGE_SMOKE` is set (`internal/image/smoke_test.go`) |
 | GUI end-to-end | Local workflow supplied | Hello launch/screenshot and button/label XCUITest in VM | `examples/hello/README.md`; `examples/hello/HelloUITests/HelloUITests.swift` |
-| Hardware/permissions | Human verification required | Physical vs injected input, permissions, display lock, microphone/camera, notifications | `helper/README.md`; `CONTRIBUTING.md`; unit tests cannot establish this |
+| Hardware/permissions | Human verification required | Physical vs injected input, permissions, display lock, microphone/camera, notifications | `helper/README.md`; `CONTRIBUTING.md`; unit tests cannot establish this. A one-time acceptance on one Mac is recorded in [CONCERNS.md](CONCERNS.md#c01-hardware-acceptance-record) |
 
 ### 4) Mocking and Isolation Strategy
 
 Tests use temporary directories, environment overrides, and explicit caller-environment maps. Host runner tests execute real short shell processes and verify cleanup/output semantics (`internal/run/host_test.go`; `internal/run/process_test.go`). Daemon tests isolate state with real SQLite/socket fixtures, inject executor and memory functions, and use a substitute Tart executable. Host gates/execution can also be supplied explicitly. These seams exercise queue and retained-resource behavior without running app GUI tasks (`internal/daemon/server_test.go`; `internal/daemon/retained_test.go`). Guest transport tests use a loopback SSH server with an ephemeral key; quoting tests run generated commands through Bash (`internal/guest/ssh_test.go`; `internal/guest/stream_test.go`).
 
-`TestImageSmoke` clones the explicitly selected image and cleans only that owned clone (`internal/image/smoke_test.go`). Helper tests use supplied values for sensor/filter decisions; they do not prove the input provenance filter on the user's Mac (`helper/Tests/OffscreenHelperTests/HelperTests.swift`; `helper/README.md`).
+`TestImageSmoke` clones the explicitly selected image and cleans only that owned clone (`internal/image/smoke_test.go`). Helper tests use supplied values for sensor/filter decisions; they do not prove the input provenance filter on any particular Mac. Real-hardware evidence comes only from the human acceptance recorded under C01 (`helper/Tests/OffscreenHelperTests/HelperTests.swift`; `helper/README.md`).
 
 An observed failure mode is coverage instrumentation on the re-executed guardian test binary: it writes `warning: GOCOVERDIR not set, no coverage data emitted` to the same stderr being asserted as task output (`internal/run/process.go`; `internal/run/process_test.go`; `internal/run/host_test.go`; terminal results below).
 
 ### 5) Coverage and Quality Signals
 
-No percentage threshold is configured in the inspected `mise.toml` or `.github/workflows/ci.yml`. CI runs on `macos-15` for pushes and pull requests and invokes only `mise run lint` and `mise run test`; there are no explicit Swift, ShellCheck, coverage, race, or build steps (`.github/workflows/ci.yml`). Real Tart and XCUITest checks are explicitly local because GitHub-hosted macOS runners do not support Tart VMs (`CONTRIBUTING.md`).
+No percentage threshold is configured in the inspected `mise.toml` or `.github/workflows/ci.yml`. CI runs on `macos-15` for pushes and pull requests and invokes only `mise run lint` and `mise run test`; there are no explicit Swift, ShellCheck, coverage, race, or build steps (`.github/workflows/ci.yml`). Swift build/test and ShellCheck are feasible on hosted macOS and are planned CI additions (C05). Real Tart and XCUITest checks are explicitly local because GitHub-hosted macOS runners do not support Tart VMs (`CONTRIBUTING.md`).
 
 Session verification on Go 1.27.0 darwin/arm64:
 
@@ -68,7 +68,7 @@ Session verification on Go 1.27.0 darwin/arm64:
 | `(cd helper && swift test)` | Passed: 7 XCTest cases, zero failures |
 | `go test ./... -cover` | Failed in `internal/run` at `TestExecuteHostPrepareEnvironmentArgvAndExit` and `TestGuardianOutputExitAndFastLeader`; additional coverage warnings broke exact stderr comparisons |
 | Focused two tests without coverage, `-count=1` | Passed in 1.284 seconds |
-| Real VM smoke/Hello/hardware probe | [TODO] Not executed in this documentation session |
+| Real VM smoke/Hello/hardware probe | [TODO] Not executed in this documentation session. Earlier human host-lane acceptance up to `c037c4c` is summarized under C01 in [CONCERNS.md](CONCERNS.md) |
 
 Partial coverage from the failing run: CLI 48.5%, config 66.4%, daemon 77.7%, guest 37.8%, image 11.0%, project 89.9%, run 45.8% (failed suite). Daemon entrypoint, logging, and Tart reported 0.0%; exitcode had no test files. These are diagnostic package percentages, not a successful whole-suite coverage baseline.
 

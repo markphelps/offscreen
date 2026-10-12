@@ -24,8 +24,8 @@ There is no separate broker in the mapped runtime: scheduling is inside the loca
 
 | Store | Role | Access layer | Key risk | Evidence |
 |-------|------|--------------|----------|----------|
-| `~/Library/Application Support/offscreen/jobs.sqlite` | Jobs, request snapshots, pause/hold state | `internal/daemon/server.go` using database/sql + SQLite driver | Caller environment can include secrets; backups inherit sensitivity | `DAEMON.md`; `docs/config.md` |
-| `~/Library/Caches/offscreen/jobs/<id>/` | Stdout/stderr logs and collected artifacts | Daemon log handling + runner collection | Disk accumulation and artifact sensitivity | `internal/daemon/server.go`; `internal/run/run.go`; `DAEMON.md` |
+| `~/Library/Application Support/offscreen/jobs.sqlite` | Jobs, request snapshots, pause/hold state | `internal/daemon/server.go` using database/sql + SQLite driver | Caller environment can include secrets and stays after the job ends (C02, planned repair); backups inherit sensitivity | `DAEMON.md`; `docs/config.md` |
+| `~/Library/Caches/offscreen/jobs/<id>/` | Stdout/stderr logs and collected artifacts | Daemon log handling + runner collection | Disk accumulation with no expiry (C13, planned repair); artifact sensitivity | `internal/daemon/server.go`; `internal/run/run.go`; `DAEMON.md` |
 | `~/Library/Caches/offscreen/projects/<hash>/` | Per-checkout persistent task cache | `projectKey` hashes absolute root; mounted into VM as cache | Cache persists across disposable jobs | `internal/run/run.go`; `internal/run/host.go`; `internal/run/transport.go` |
 | User `config.toml` | Machine settings, image reference, SSH credentials | `internal/config/config.go`; `internal/config/current_image.go` | Password is stored as config text | `docs/config.md` |
 | Tart image/clone storage | Golden VM and job disks | Tart owns storage location | Retained failed clone holds admission leases until canceled | `internal/tart/tart.go`; `DAEMON.md` |
@@ -37,9 +37,9 @@ There is no separate broker in the mapped runtime: scheduling is inside the loca
 
 SSH credentials come from the optional user config. Defaults are `admin` / `admin`; `ssh_key` accepts a private-key path and expands `~/`. At least one authentication method is required (`internal/config/config.go`; `internal/guest/ssh.go`). Config writes use owner-only temporary files and atomic rename; image-reference updates preserve unrelated TOML/comments (`internal/config/config.go`; `internal/config/current_image.go`).
 
-The CLI snapshots its caller environment, including values containing `=`, into the daemon request. Host preparation and host task execution use that snapshot; VM task environment construction supplies only the four runner variables (`cmd/offscreen/main.go`; `internal/run/run.go`; `internal/run/host.go`). This separation does not remove secrets from the persisted job request (`DAEMON.md`).
+The CLI snapshots its caller environment, including values containing `=`, into the daemon request. Host preparation and host task execution use that snapshot; VM task environment construction supplies only the four runner variables (`cmd/offscreen/main.go`; `internal/run/run.go`; `internal/run/host.go`). This separation does not remove secrets from the persisted job request, which keeps them after completion at this checkout (C02; `DAEMON.md`).
 
-SSH uses `InsecureIgnoreHostKey` by design. The code validates that the supplied guest address parses as an IP and obtains it from Tart, but does not cryptographically verify guest identity (`internal/guest/ssh.go`; `internal/run/transport.go`). [TODO] No credential rotation or secret-retention procedure is defined in the inspected public guides/config.
+SSH uses `InsecureIgnoreHostKey` by design. The code validates that the supplied guest address parses as an IP and obtains it from Tart, but does not cryptographically verify guest identity. This trusts the ephemeral Tart network; no violation of that boundary was shown, but it remains a real tradeoff (C10; `internal/guest/ssh.go`; `internal/run/transport.go`). [TODO] No credential rotation or secret-retention procedure is defined in the inspected public guides/config.
 
 ### 4) Reliability and Failure Behavior
 
