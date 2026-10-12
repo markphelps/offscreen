@@ -1,24 +1,24 @@
 package config
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
-	"strings"
-)
+	"unicode/utf8"
 
-var (
-	currentImageLine = regexp.MustCompile(`(?m)^[ \t]*(?:current_image|"current_image"|'current_image')[ \t]*=[ \t]*[^\n]*\n?`)
-	firstTable       = regexp.MustCompile(`(?m)^\s*\[`)
+	"github.com/pelletier/go-toml/v2/unstable"
 )
 
 // SetCurrentImageFile updates only the top-level image reference, preserving
 // comments and unrelated settings that older versions of offscreen don't know.
 func SetCurrentImageFile(path, name string) error {
+	if !utf8.ValidString(name) {
+		return errors.New("image reference is not valid UTF-8")
+	}
 	contents, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		cfg := Default()
@@ -32,20 +32,9 @@ func SetCurrentImageFile(path, name string) error {
 	if _, err := LoadFile(path); err != nil {
 		return err
 	}
-	body := string(contents)
-	index := firstTable.FindStringIndex(body)
-	if index == nil {
-		index = []int{len(body), len(body)}
-	}
-	prefix, tables := body[:index[0]], body[index[0]:]
-	line := "current_image = " + strconv.Quote(name) + "\n"
-	if currentImageLine.MatchString(prefix) {
-		prefix = currentImageLine.ReplaceAllString(prefix, line)
-	} else {
-		if prefix != "" && !strings.HasSuffix(prefix, "\n") {
-			prefix += "\n"
-		}
-		prefix += line
+	updated, err := currentImageContents(contents, name)
+	if err != nil {
+		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
@@ -59,7 +48,7 @@ func SetCurrentImageFile(path, name string) error {
 	if err := file.Chmod(0o600); err != nil {
 		return err
 	}
-	if _, err := file.WriteString(prefix + tables); err != nil {
+	if _, err := file.Write(updated); err != nil {
 		return err
 	}
 	if err := file.Close(); err != nil {
@@ -69,4 +58,53 @@ func SetCurrentImageFile(path, name string) error {
 		return err
 	}
 	return nil
+}
+
+// Use the syntax parser only to locate source ranges. The config decoder above
+// still validates the document; unrelated values and comments are never encoded.
+func currentImageContents(contents []byte, name string) ([]byte, error) {
+	value, err := json.Marshal(name)
+	if err != nil {
+		return nil, fmt.Errorf("encode image reference: %w", err)
+	}
+	// JSON leaves DEL literal, but TOML basic strings require it escaped.
+	value = bytes.ReplaceAll(value, []byte{0x7f}, []byte(`\u007f`))
+	var parser unstable.Parser
+	parser.Reset(contents)
+	insertion := len(contents)
+	for parser.NextExpression() {
+		expression := parser.Expression()
+		switch expression.Kind {
+		case unstable.Table, unstable.ArrayTable:
+			key := expression.Key()
+			key.Next()
+			// Table headers occupy their own line. Include indentation in the
+			// untouched suffix instead of inserting inside the header.
+			insertion = bytes.LastIndexByte(contents[:key.Node().Raw.Offset], '\n') + 1
+			return insertCurrentImage(contents, insertion, value), nil
+		case unstable.KeyValue:
+			key := expression.Key()
+			if key.Next() && key.IsLast() && bytes.Equal(key.Node().Data, []byte("current_image")) {
+				raw := expression.Value().Raw
+				start, end := int(raw.Offset), int(raw.Offset+raw.Length)
+				updated := append(bytes.Clone(contents[:start]), value...)
+				return append(updated, contents[end:]...), nil
+			}
+		}
+	}
+	if err := parser.Error(); err != nil {
+		return nil, fmt.Errorf("locate current image: %w", err)
+	}
+	return insertCurrentImage(contents, insertion, value), nil
+}
+
+func insertCurrentImage(contents []byte, offset int, value []byte) []byte {
+	prefix := bytes.Clone(contents[:offset])
+	if len(prefix) > 0 && prefix[len(prefix)-1] != '\n' {
+		prefix = append(prefix, '\n')
+	}
+	prefix = append(prefix, "current_image = "...)
+	prefix = append(prefix, value...)
+	prefix = append(prefix, '\n')
+	return append(prefix, contents[offset:]...)
 }
