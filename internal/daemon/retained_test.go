@@ -23,6 +23,15 @@ import (
 // actual executor starts and Tart operations rather than setting retained flags.
 func retainedTart(t *testing.T, s *Server) string {
 	t.Helper()
+	dir, client := retainedTartClient(t)
+	s.tart = client
+	return dir
+}
+
+// retainedTartClient returns the Tart double and its inventory directory
+// without installing it, for servers opened with it from the start.
+func retainedTartClient(t *testing.T) (string, tart.Client) {
+	t.Helper()
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "tart")
 	script := fmt.Sprintf(`#!/bin/sh
@@ -30,6 +39,7 @@ set -eu
 cd '%s'
 case "$1" in
 list)
+  [ ! -f list-fails ] || exit 1
   printf '['
   separator=''
   for file in job-*; do
@@ -53,8 +63,7 @@ delete)
 esac
 `, dir)
 	require.NoError(t, os.WriteFile(binary, []byte(script), 0o700)) // #nosec G306 -- private test executable
-	s.tart = tart.Client{Binary: binary}
-	return dir
+	return dir, tart.Client{Binary: binary}
 }
 
 func keptExecutor(_ context.Context, o run.Options) run.Result {

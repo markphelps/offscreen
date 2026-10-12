@@ -443,7 +443,11 @@ func TestPruneHandlesRecordsFromEarlierDaemons(t *testing.T) {
 	insertJobRecord(t, s, orphan, "vm", "running", orphanDir, time.Now().Add(-expiredAge), Request{Root: root, Project: "hello", Argv: []string{"true"}})
 	require.NoError(t, s.Close())
 
-	reopened, err := open(config.Default(), pruneExecutor(nil), emptyTart(t), func() (uint64, error) { return 20 << 30, nil })
+	// Keep the startup expiry pass away from these records; this test drives
+	// the engine directly.
+	cfg := config.Default()
+	cfg.JobRetention = 1000 * 24 * time.Hour
+	reopened, err := open(cfg, pruneExecutor(nil), emptyTart(t), func() (uint64, error) { return 20 << 30, nil })
 	require.NoError(t, err)
 	defer func() { require.NoError(t, reopened.Close()) }()
 	report, err := reopened.Prune(context.Background(), PruneOptions{Cutoff: time.Now().Add(-720 * time.Hour), Apply: true})

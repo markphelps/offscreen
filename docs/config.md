@@ -66,6 +66,7 @@ idle_threshold = "5m"
 grace = "1m"
 vm_slots = 2
 low_memory_threshold_gb = 8
+job_retention = "168h"           # expire completed jobs after seven days
 
 [image]
 base = "ghcr.io/cirruslabs/macos-tahoe-xcode:latest"
@@ -83,6 +84,7 @@ ssh_password = "admin"
 | `grace` | `1m` | Time from detected/manual return before a host job is requeued if the desktop is still in use or the helper signal is stale. |
 | `vm_slots` | `2` | VM concurrency limit; Apple's license allows no more than two macOS guests on one host. |
 | `low_memory_threshold_gb` | `8` | When available memory is below this threshold, admit only one VM job. |
+| `job_retention` | `168h` (seven days) | How long the daemon keeps a completed job's record, stream log and artifacts after it finished. Must be a positive Go duration string such as `24h` or `720h`; `0`, negative values and non-string values are rejected, so automatic cleanup cannot be disabled by accident. The daemon expires older jobs at startup and then every hour; see [DAEMON.md](../DAEMON.md). Read at daemon startup; restart the daemon after changing it. |
 | `[image] base` | `ghcr.io/cirruslabs/macos-tahoe-xcode:latest` | Tart image cloned for a new golden image. Build pulls it if absent; refresh pulls again. |
 | `[image] display` | `1440x900` | Guest display dimensions: `WIDTHxHEIGHT`, optionally `pt` or `px`. No suffix means points. |
 | `[image] ssh_user` | `admin` | Base-image SSH login. |

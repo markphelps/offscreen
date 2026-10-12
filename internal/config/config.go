@@ -15,6 +15,10 @@ import (
 const (
 	defaultBase    = "ghcr.io/cirruslabs/macos-tahoe-xcode:latest"
 	defaultDisplay = "1440x900" // Points; the 2x framebuffer is 2880x1800 pixels.
+
+	// DefaultJobRetention is how long completed jobs are kept before the daemon
+	// expires them automatically.
+	DefaultJobRetention = 7 * 24 * time.Hour
 )
 
 // Image contains settings for building and connecting to the golden image.
@@ -32,6 +36,7 @@ type Config struct {
 	CurrentImage         string        `toml:"current_image"`
 	IdleThreshold        time.Duration `toml:"-"`
 	Grace                time.Duration `toml:"-"`
+	JobRetention         time.Duration `toml:"-"`
 	VMSlots              int           `toml:"vm_slots"`
 	LowMemoryThresholdGB int           `toml:"low_memory_threshold_gb"`
 	Image                Image         `toml:"image"`
@@ -42,6 +47,7 @@ func Default() Config {
 	return Config{
 		IdleThreshold:        5 * time.Minute,
 		Grace:                time.Minute,
+		JobRetention:         DefaultJobRetention,
 		VMSlots:              2,
 		LowMemoryThresholdGB: 8,
 		Image: Image{
@@ -86,7 +92,7 @@ func LoadFile(path string) (Config, error) {
 		return Config{}, fmt.Errorf("read config %q: %w", path, err)
 	}
 
-	raw := fileConfig{Config: cfg, IdleThreshold: cfg.IdleThreshold.String(), Grace: cfg.Grace.String()}
+	raw := newFileConfig(cfg)
 	if err := toml.Unmarshal(contents, &raw); err != nil {
 		return Config{}, fmt.Errorf("decode config %q: %w", path, err)
 	}
@@ -95,6 +101,13 @@ func LoadFile(path string) (Config, error) {
 	}
 	if raw.Config.Grace, err = time.ParseDuration(raw.Grace); err != nil {
 		return Config{}, fmt.Errorf("invalid grace: %w", err)
+	}
+	if raw.Config.JobRetention, err = time.ParseDuration(raw.JobRetention); err != nil {
+		return Config{}, fmt.Errorf("invalid job_retention: %w", err)
+	}
+	// Zero would silently disable cleanup; history must stay bounded.
+	if raw.Config.JobRetention <= 0 {
+		return Config{}, fmt.Errorf("invalid job_retention %q: must be a positive duration", raw.JobRetention)
 	}
 	return raw.Config, nil
 }
@@ -122,11 +135,7 @@ func SaveFile(path string, cfg Config) error {
 	if err := file.Chmod(0o600); err != nil {
 		return fmt.Errorf("protect temporary config: %w", err)
 	}
-	if err := toml.NewEncoder(file).Encode(fileConfig{
-		Config:        cfg,
-		IdleThreshold: cfg.IdleThreshold.String(),
-		Grace:         cfg.Grace.String(),
-	}); err != nil {
+	if err := toml.NewEncoder(file).Encode(newFileConfig(cfg)); err != nil {
 		return fmt.Errorf("encode config: %w", err)
 	}
 	if err := file.Close(); err != nil {
@@ -143,4 +152,14 @@ type fileConfig struct {
 	Config
 	IdleThreshold string `toml:"idle_threshold"`
 	Grace         string `toml:"grace"`
+	JobRetention  string `toml:"job_retention"`
+}
+
+func newFileConfig(cfg Config) fileConfig {
+	return fileConfig{
+		Config:        cfg,
+		IdleThreshold: cfg.IdleThreshold.String(),
+		Grace:         cfg.Grace.String(),
+		JobRetention:  cfg.JobRetention.String(),
+	}
 }
