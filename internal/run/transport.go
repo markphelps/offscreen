@@ -4,12 +4,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -43,7 +45,14 @@ func waitGuest(ctx context.Context, vm tart.Client, creds guest.Credentials, nam
 		case <-time.After(2 * time.Second):
 		}
 	}
-	return nil, fmt.Errorf("guest SSH not ready: %w (last attempt: %w)", ctx.Err(), last)
+	return nil, guestSSHError(ctx.Err(), last)
+}
+
+func guestSSHError(reason, last error) error {
+	if errors.Is(last, syscall.EHOSTUNREACH) {
+		return fmt.Errorf("guest SSH not ready: %w (last attempt: %w); macOS Local Network access may be blocked: allow Offscreen Daemon in System Settings > Privacy & Security > Local Network", reason, last)
+	}
+	return fmt.Errorf("guest SSH not ready: %w (last attempt: %w)", reason, last)
 }
 
 func waitGUI(ctx context.Context, client *ssh.Client) error {
