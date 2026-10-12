@@ -55,7 +55,10 @@ func TestSubmissionUsesEachClientsHostEnvironment(t *testing.T) {
 		spec, err := project.Resolve(contract, project.RunRequest{Argv: []string{"true"}, JobID: tc.job.ID, OutDir: "/tmp/out", CacheDir: "/tmp/cache", HostEnv: received[tc.job.ID]})
 		require.NoError(t, err)
 		require.Equal(t, []string{filepath.Join(tc.dir, "App.app")}, spec.Shares)
-		require.Equal(t, tc.dir, request.HostEnv[key])
+		// Completed records drop the caller snapshot once execution has used it.
+		require.Nil(t, request.HostEnv)
+		require.NotContains(t, stored, tc.dir)
+		require.Equal(t, []string{"true"}, request.Argv)
 	}
 }
 
