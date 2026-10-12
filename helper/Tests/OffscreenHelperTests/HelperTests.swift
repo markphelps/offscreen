@@ -3,6 +3,15 @@ import XCTest
 @testable import OffscreenHelper
 
 final class HelperTests: XCTestCase {
+    func testCameraActiveOrUnknownDevicesCannotBeIdle() {
+        XCTAssertEqual(Sensors.cameraIdle(deviceStates: []), true)
+        XCTAssertEqual(Sensors.cameraIdle(deviceStates: [0, 0]), true)
+        XCTAssertEqual(Sensors.cameraIdle(deviceStates: [1]), false)
+        XCTAssertEqual(Sensors.cameraIdle(deviceStates: [0, 2]), false)
+        XCTAssertNil(Sensors.cameraIdle(deviceStates: [nil]))
+        XCTAssertNil(Sensors.cameraIdle(deviceStates: [0, nil]))
+    }
+
     func testCountdownFrameStaysInsideTheDisplayAfterLayout() {
         for visible in [NSRect(x: 55, y: 0, width: 3145, height: 1770),
                         NSRect(x: -1920, y: -200, width: 1920, height: 1080),

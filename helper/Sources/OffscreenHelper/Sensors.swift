@@ -1,4 +1,4 @@
-import AVFoundation
+import CoreMediaIO
 import CoreAudio
 import CoreGraphics
 import Foundation
@@ -44,10 +44,39 @@ struct Sensors {
         return true
     }
 
-    static func cameraIdle() -> Bool {
-        let devices = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInWideAngleCamera, .external],
-                                                       mediaType: .video, position: .unspecified).devices
-        return devices.allSatisfy { !$0.isInUseByAnotherApplication }
+    static func cameraIdle(deviceStates: [UInt32?]) -> Bool? {
+        guard deviceStates.allSatisfy({ $0 != nil }) else { return nil }
+        return deviceStates.allSatisfy { $0 == 0 }
+    }
+
+    static func cameraIdle() -> Bool? {
+        var address = CMIOObjectPropertyAddress(
+            mSelector: CMIOObjectPropertySelector(kCMIOHardwarePropertyDevices),
+            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
+            mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain))
+        let system = CMIOObjectID(kCMIOObjectSystemObject)
+        let stride = MemoryLayout<CMIOObjectID>.size
+        var size: UInt32 = 0
+        guard CMIOObjectGetPropertyDataSize(system, &address, 0, nil, &size) == noErr,
+              Int(size) % stride == 0 else { return nil }
+        if size == 0 { return cameraIdle(deviceStates: []) }
+        var devices = [CMIOObjectID](repeating: 0, count: Int(size) / stride)
+        var used: UInt32 = 0
+        guard CMIOObjectGetPropertyData(system, &address, 0, nil, size, &used, &devices) == noErr,
+              used <= size, Int(used) % stride == 0 else { return nil }
+        var states: [UInt32?] = []
+        for device in devices.prefix(Int(used) / stride) {
+            var running = CMIOObjectPropertyAddress(
+                mSelector: CMIOObjectPropertySelector(kCMIODevicePropertyDeviceIsRunningSomewhere),
+                mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
+                mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain))
+            var active: UInt32 = 0
+            var returned: UInt32 = 0
+            let expected = UInt32(MemoryLayout<UInt32>.size)
+            let status = CMIOObjectGetPropertyData(device, &running, 0, nil, expected, &returned, &active)
+            states.append(status == noErr && returned == expected ? active : nil)
+        }
+        return cameraIdle(deviceStates: states)
     }
 
     static func sessionUnlocked(_ session: [String: Any]?) -> Bool {
@@ -64,7 +93,7 @@ struct Sensors {
         return Snapshot(idleSeconds: idleSeconds() ?? 0,
                         unlocked: unlocked,
                         displayAwake: CGDisplayIsAsleep(CGMainDisplayID()) == 0,
-                        cameraIdle: cameraIdle(), microphoneIdle: microphoneIdle() == true,
+                        cameraIdle: cameraIdle() == true, microphoneIdle: microphoneIdle() == true,
                         inputMonitoring: CGPreflightListenEventAccess(), eventTapReady: eventTapReady)
     }
 }
