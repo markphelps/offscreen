@@ -39,6 +39,7 @@ Run from a directory under a repo containing `.offscreen.toml`, or pass `--workt
 | `offscreen logs <job>` | Follow stdout/stderr while active; return after a completed job. `-f` also follows; `--no-follow` prints a snapshot. |
 | `offscreen artifacts <job>` | Print the job's artifact directory. |
 | `offscreen cancel <job>` | Cancel an active/queued job and wait for cleanup; also delete a retained `--keep` clone without changing its recorded result. |
+| `offscreen prune --older-than 720h --dry-run` / `--yes` | Preview, or delete, completed jobs (record, logs and artifacts) that finished longer ago than the given age. Queued, active and retained jobs are skipped. |
 | `offscreen pause` / `offscreen resume` | Pause/release the host lane; the manual pause survives daemon restarts. Resume also clears a **Not now** delay. |
 | `offscreen image build` / `offscreen image refresh` | Build a golden image; refresh pulls the base image again before rebuilding. |
 | `offscreen daemon install` / `offscreen daemon uninstall` | Register/start or stop/remove the user's daemon LaunchAgent. |

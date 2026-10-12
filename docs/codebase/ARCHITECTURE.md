@@ -28,6 +28,7 @@ Swift helper -> desktop snapshot / actions -> daemon host policy
 4. VM execution runs optional host preparation, clones `job-<id>`, boots headless with read-only worktree and writable artifact/cache shares, waits for SSH/GUI, then copies the worktree/prepared products using tar over SSH. The worktree copy excludes `.git` and `.build`. Guest setup precedes the command; only four explicit runner environment variables are supplied (`internal/run/run.go`; `internal/run/transport.go`).
 5. Host admission checks fresh helper observations, permissions/tap, unlocked/awake session, idle camera/microphone, idle threshold, and pause state, then gives a ten-second countdown. `ExecuteHost` runs preparation followed by the task in the real checkout with the caller environment and four task variables. It skips guest setup and VM copies (`internal/daemon/host.go`; `internal/run/host.go`).
 6. Workers append output frames to `stream.bin`; HTTP streaming preserves stdout/stderr identity and follows until cleanup completes. VM output is collected and the clone deleted unless a failed started VM is retained. Terminal status carries code/reason/artifact path back to the CLI; attached runs print job/artifact identity on stderr (`internal/daemon/server.go`; `internal/daemon/protocol.go`; `internal/daemon/client.go`; `cmd/offscreen/main.go`).
+7. `offscreen prune --older-than <age> --dry-run|--yes` asks the daemon (`POST /prune`) to run its expiry engine, `Server.Prune`, with a cutoff from the daemon clock. Under the admission lock it selects terminal jobs completed before the cutoff whose worker has returned and that hold no retained clone or cleanup; Tart must show no `job-<id>` clone left. Deletion removes the ID-derived job directory, then the row, then the memory entry, rechecking eligibility under the lock first. Partial failures stay listed with their original completion time and are retried by the next run; they do not stop the daemon. Persistent project caches and images are outside the engine (`internal/daemon/prune.go`; `cmd/offscreen/main.go`, `PruneCmd`).
 
 ### 3) Layer/Module Responsibilities
 
@@ -37,7 +38,7 @@ These are observed/documented boundaries, not additional enforceable rules.
 |--------|------|--------------|----------|
 | CLI | Parsing, submission, input/output forwarding, exit status | App-specific behavior beyond contract commands | `cmd/offscreen/main.go`; `README.md` |
 | Project | Discovery, strict validation, task/lane/share/env resolution | Execution or job creation | `internal/project/project.go` package comment |
-| Daemon | SQLite state, ordering, admission/exclusion, HTTP API, durable host controls | Native sensor/UI implementation | `internal/daemon/server.go`; `internal/daemon/host.go` |
+| Daemon | SQLite state, ordering, admission/exclusion, HTTP API, durable host controls, completed-job expiry | Native sensor/UI implementation | `internal/daemon/server.go`; `internal/daemon/host.go` |
 | Runner | Preparation, VM/host command lifecycle, artifacts, cleanup | Scheduling when daemon owns admission (`SkipLock`) | `internal/run/run.go`; `internal/run/host.go` |
 | Guardian | Independent process-group ownership, cleanup protocol/lease/markers | CLI flag parsing or queue admission | `internal/run/process.go`; `internal/run/guardian_darwin.go` |
 | Guest/Tart | SSH and external VM CLI adapters | Global unowned clone deletion | `internal/guest/ssh.go`; `internal/tart/tart.go` package comment |
@@ -68,7 +69,7 @@ Restart fails active jobs and queued attached jobs; detached queued jobs may res
 - Automatic return detection depends on a PID-zero filter that each installation enables after its own probe. The helper defaults it off, and the menu's manual return works either way. The filter separated physical from injected input on the maintainer's Mac during acceptance; that does not prove other hardware or a given installation's settings (C01; `helper/Sources/OffscreenHelper/InputFilter.swift`; `helper/README.md`).
 - Host take-back/requeue restarts preparation and the task with closed stdin. Task side effects need to tolerate interruption/re-execution; input cannot be replayed (`internal/daemon/server.go`; `DAEMON.md`).
 - A leftover guardian marker deliberately blocks restart until manual inspection/removal (C03, fail-closed by design). Tart list/cleanup failure during the shared startup sweep also prevents daemon startup; Tart is a prerequisite for both lanes (C17) (`internal/run/guardian_darwin.go`; `internal/daemon/server.go`; `DAEMON.md`).
-- Retained VMs (C06) and FIFO lane-head waiting (C14) can delay unrelated projects; both are intentional. History/log/artifact retention has no pruning path at this checkout, and terminal records keep the full caller environment; both have planned repairs (C13, C02) (`internal/daemon/server.go`; see [CONCERNS.md](CONCERNS.md)).
+- Retained VMs (C06) and FIFO lane-head waiting (C14) can delay unrelated projects; both are intentional. Terminal records no longer keep the caller environment (C02). Completed-job history, logs and artifacts can be removed with the previewable `prune` command through the shared expiry engine; automatic scheduled expiry is a planned follow-up (C13). Deleted rows free SQLite pages for reuse without shrinking the file (`internal/daemon/server.go`; `internal/daemon/prune.go`; see [CONCERNS.md](CONCERNS.md)).
 
 ### 6) Evidence
 
@@ -78,6 +79,7 @@ Restart fails active jobs and queued attached jobs; detached queued jobs may res
 - `internal/daemon/server.go`
 - `internal/daemon/host.go`
 - `internal/daemon/protocol.go`
+- `internal/daemon/prune.go`
 - `internal/run/run.go`
 - `internal/run/process.go`
 - `helper/Sources/OffscreenHelper/HelperApp.swift`

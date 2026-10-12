@@ -12,7 +12,7 @@ Snapshot: checkout `ea6387d` (2026-10-12). Paths are relative to the repository 
 | `cmd/offscreend/` | Daemon executable startup | `cmd/offscreend/main.go` |
 | `internal/config/` | User defaults, TOML IO, syntax-preserving current image updates | `internal/config/config.go`; `internal/config/current_image.go` |
 | `internal/project/` | Project contract discovery, validation, job resolution | `internal/project/project.go` |
-| `internal/daemon/` | Socket protocol, durable queue, host policy, client, launchd installation | `internal/daemon/protocol.go`; `internal/daemon/server.go`; `internal/daemon/host.go`; `internal/daemon/install.go` |
+| `internal/daemon/` | Socket protocol, durable queue, host policy, completed-job expiry engine, client, launchd installation | `internal/daemon/protocol.go`; `internal/daemon/server.go`; `internal/daemon/host.go`; `internal/daemon/prune.go`; `internal/daemon/install.go` |
 | `internal/run/` | VM and host execution, transport, advisory locks, Darwin guardian | `internal/run/run.go`; `internal/run/host.go`; `internal/run/process.go`; `internal/run/guardian_darwin.go` |
 | `internal/guest/` | SSH credentials, shell quoting, output streaming | `internal/guest/ssh.go`; `internal/guest/stream.go` |
 | `internal/tart/` | Tart CLI adapter | `internal/tart/tart.go` |
@@ -43,7 +43,7 @@ The exclusions below describe documented or observed boundaries, not an addition
 | Boundary | What belongs here | What must not be here |
 |----------|-------------------|------------------------|
 | `project` | Pure contract parsing/resolution and supplied path/env overlays | Execution and job creation; explicitly excluded by the package comment in `internal/project/project.go` |
-| `daemon` | Scheduling, persistence, client RPC, admission policy | App-specific test logic; tasks come from project contracts (`internal/daemon/server.go`; `README.md`) |
+| `daemon` | Scheduling, persistence, client RPC, admission policy, expiry of completed job records and their owned job directories | App-specific test logic; tasks come from project contracts (`internal/daemon/server.go`; `README.md`). Expiry never deletes per-project caches, images, VMs or paths read from the database (`internal/daemon/prune.go`) |
 | `run` | Already-resolved lane execution, process/VM lifecycle, stream/artifact handling | Helper UI; scheduling is delegated to daemon when `SkipLock` is set (`internal/run/run.go`; `internal/run/host.go`) |
 | `tart` / `guest` | External process and SSH adapters | Ownership-free destructive sweeps; Tart adapter explicitly requires caller-owned VM names (`internal/tart/tart.go`) |
 | `helper` | Native desktop signals and host controls over socket | VM execution; VM lane is independent of helper (`helper/README.md`; `internal/run/run.go`) |

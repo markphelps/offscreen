@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -31,6 +32,7 @@ type CLI struct {
 	Logs      LogsCmd      `cmd:"" help:"Print or follow job output."`
 	Artifacts ArtifactsCmd `cmd:"" help:"Print a job's artifact directory."`
 	Cancel    CancelCmd    `cmd:"" help:"Cancel a job."`
+	Prune     PruneCmd     `cmd:"" help:"Preview or delete old completed jobs and their output."`
 	Pause     PauseCmd     `cmd:"" help:"Pause the host lane."`
 	Resume    ResumeCmd    `cmd:"" help:"Resume the host lane."`
 	Image     ImageCmd     `cmd:"" help:"Manage the golden image."`
@@ -197,6 +199,67 @@ func (c *CancelCmd) Run() error {
 	}
 	_, err = client.Cancel(context.Background(), c.Job)
 	return err
+}
+
+type PruneCmd struct {
+	OlderThan time.Duration `help:"Select completed jobs that finished longer ago than this (for example 720h)." required:""`
+	DryRun    bool          `help:"List what would be deleted without changing anything."`
+	Yes       bool          `help:"Delete the selected jobs."`
+}
+
+func (c *PruneCmd) Validate() error {
+	if c.OlderThan <= 0 {
+		return errors.New("--older-than must be a positive duration")
+	}
+	if c.DryRun == c.Yes {
+		return errors.New("choose exactly one of --dry-run (preview) or --yes (delete)")
+	}
+	return nil
+}
+
+func (c *PruneCmd) Run() error {
+	client, err := daemon.Dial()
+	if err != nil {
+		return err
+	}
+	return c.prune(context.Background(), client, os.Stdout, os.Stderr)
+}
+
+// prune prints the daemon's report: selected, skipped and deleted jobs on
+// stdout; per-job failures and retry guidance on stderr.
+func (c *PruneCmd) prune(ctx context.Context, client daemon.Client, stdout, stderr io.Writer) error {
+	report, err := client.Prune(ctx, daemon.PruneRequest{OlderThan: c.OlderThan, Apply: c.Yes})
+	if err != nil {
+		return err
+	}
+	line := func(action string, e daemon.PruneEntry, detail string) {
+		_, _ = fmt.Fprintf(stdout, "%s  %s  %s  %s  %s  %s\n", action, e.Job.ID, e.Job.Project, e.Job.State, e.Job.Updated.UTC().Format(time.RFC3339), detail)
+	}
+	_, _ = fmt.Fprintf(stdout, "cutoff  %s  (completed more than %s ago)\n", report.Cutoff.UTC().Format(time.RFC3339), c.OlderThan)
+	if report.Apply {
+		for _, e := range report.Deleted {
+			line("deleted", e, "")
+		}
+	} else {
+		for _, e := range report.Eligible {
+			line("would-delete", e, "")
+		}
+	}
+	for _, e := range report.Skipped {
+		line("skipped", e, e.Reason)
+	}
+	for _, e := range report.Failed {
+		_, _ = fmt.Fprintf(stderr, "prune: job %s: %s\n", e.Job.ID, e.Reason)
+	}
+	if report.Apply {
+		_, _ = fmt.Fprintf(stdout, "summary  deleted %d, failed %d, skipped %d, kept %d newer\n", len(report.Deleted), len(report.Failed), len(report.Skipped), report.Recent)
+	} else {
+		_, _ = fmt.Fprintf(stdout, "summary  dry run: would delete %d, skipped %d, kept %d newer; nothing changed\n", len(report.Eligible), len(report.Skipped), report.Recent)
+	}
+	if len(report.Failed) > 0 {
+		return fmt.Errorf("prune: %d job(s) not deleted; they keep their completion time, so rerun offscreen prune --older-than %s --yes to retry", len(report.Failed), c.OlderThan)
+	}
+	return nil
 }
 
 type PauseCmd struct{}
