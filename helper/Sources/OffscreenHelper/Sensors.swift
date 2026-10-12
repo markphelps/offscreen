@@ -50,13 +50,17 @@ struct Sensors {
         return devices.allSatisfy { !$0.isInUseByAnotherApplication }
     }
 
+    static func sessionUnlocked(_ session: [String: Any]?) -> Bool {
+        session?["CGSSessionScreenIsLocked"] as? Bool != true
+            && session?[kCGSessionOnConsoleKey as String] as? Int == 1
+            && session?[kCGSessionLoginDoneKey as String] as? Int == 1
+    }
+
     static func snapshot(eventTapReady: Bool) -> Snapshot {
         let session = CGSessionCopyCurrentDictionary() as? [String: Any]
         // An unlocked session normally omits the lock key. Require an active,
         // logged-in console session as well; unknown values stay closed.
-        let unlocked = session?["CGSSessionScreenIsLocked"] as? Bool != true
-            && session?["kCGSessionOnConsoleKey"] as? Int == 1
-            && session?["kCGSessionLoginDoneKey"] as? Int == 1
+        let unlocked = sessionUnlocked(session)
         return Snapshot(idleSeconds: idleSeconds() ?? 0,
                         unlocked: unlocked,
                         displayAwake: CGDisplayIsAsleep(CGMainDisplayID()) == 0,

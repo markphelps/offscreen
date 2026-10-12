@@ -1,7 +1,19 @@
+import CoreGraphics
 import XCTest
 @testable import OffscreenHelper
 
 final class HelperTests: XCTestCase {
+    func testSessionUsesSDKConsoleKeysAndRejectsBlockedSessions() {
+        let console = kCGSessionOnConsoleKey as String
+        let login = kCGSessionLoginDoneKey as String
+        let unlocked: [String: Any] = [console: NSNumber(value: true), login: NSNumber(value: true)]
+        XCTAssertTrue(Sensors.sessionUnlocked(unlocked))
+        XCTAssertFalse(Sensors.sessionUnlocked(unlocked.merging(["CGSSessionScreenIsLocked": true]) { _, new in new }))
+        XCTAssertFalse(Sensors.sessionUnlocked([console: 0, login: 1]))
+        XCTAssertFalse(Sensors.sessionUnlocked([console: 1, login: 0]))
+        XCTAssertFalse(Sensors.sessionUnlocked([console: 1]))
+        XCTAssertFalse(Sensors.sessionUnlocked(nil))
+    }
     func testCandidatePhysicalInputRequiresVerifiedFilterAndCurrentJob() {
         XCTAssertNil(InputFilter.candidatePhysical(pid: 0, runningJob: "job-1", alreadyReturning: false,
                                                    manualReturn: false, verified: false))
