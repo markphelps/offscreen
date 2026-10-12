@@ -60,6 +60,20 @@ func TestGuardianOutputExitAndFastLeader(t *testing.T) {
 	require.NoError(t, WaitForHostCleanup(context.Background()))
 }
 
+// Under go test -cover the guardian keeps its own GOCOVERDIR for its exit,
+// but the task still sees only its submitted environment.
+func TestGuardianCoverageSettingStaysOutOfTask(t *testing.T) {
+	t.Setenv("OFFSCREEN_STATE_DIR", filepath.Join(t.TempDir(), "state"))
+	var stdout, stderr bytes.Buffer
+	cmd := exec.Command("/bin/sh", "-c", `printf '%s' "${GOCOVERDIR-unset}"; printf 'err' >&2; exit 3`)
+	cmd.Dir, cmd.Env = t.TempDir(), []string{"PATH=/usr/bin:/bin"}
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	code, _ := localExit(runGroup(context.Background(), cmd))
+	require.Equal(t, 3, code)
+	require.Equal(t, "unset", stdout.String())
+	require.Equal(t, "err", stderr.String())
+}
+
 func TestGuardianStartFailureRemovesMarker(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "state")
 	t.Setenv("OFFSCREEN_STATE_DIR", state)

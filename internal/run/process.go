@@ -216,6 +216,17 @@ func MaybeGuardian(args []string) bool {
 	if len(args) != 1 || args[0] != guardianArg {
 		return false
 	}
-	os.Exit(guardianMain())
+	// guardianMain replaces this process's environment with the task's. A
+	// coverage-instrumented build reads GOCOVERDIR as it exits, so restore the
+	// guardian's own value after the task is gone. Otherwise the coverage
+	// runtime warns on the task's stderr instead of writing its counters.
+	coverDir, hasCoverDir := os.LookupEnv("GOCOVERDIR")
+	code := guardianMain()
+	if hasCoverDir {
+		_ = os.Setenv("GOCOVERDIR", coverDir)
+	} else {
+		_ = os.Unsetenv("GOCOVERDIR")
+	}
+	os.Exit(code)
 	return true
 }
