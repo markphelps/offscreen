@@ -3,6 +3,20 @@ import XCTest
 @testable import OffscreenHelper
 
 final class HelperTests: XCTestCase {
+    func testCountdownFrameStaysInsideTheDisplayAfterLayout() {
+        for visible in [NSRect(x: 55, y: 0, width: 3145, height: 1770),
+                        NSRect(x: -1920, y: -200, width: 1920, height: 1080),
+                        NSRect(x: 0, y: 0, width: 250, height: 100)] {
+            let frame = CountdownPlacement.frame(panelSize: NSSize(width: 462, height: 150),
+                                                 visibleFrame: visible)
+            XCTAssertGreaterThanOrEqual(frame.minX, visible.minX)
+            XCTAssertGreaterThanOrEqual(frame.minY, visible.minY)
+            XCTAssertLessThanOrEqual(frame.maxX, visible.maxX)
+            XCTAssertLessThanOrEqual(frame.maxY, visible.maxY)
+            XCTAssertEqual(frame.midX, visible.midX)
+        }
+    }
+
     func testSessionUsesSDKConsoleKeysAndRejectsBlockedSessions() {
         let console = kCGSessionOnConsoleKey as String
         let login = kCGSessionLoginDoneKey as String
