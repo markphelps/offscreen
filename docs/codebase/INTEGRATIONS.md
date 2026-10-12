@@ -1,6 +1,6 @@
 # External Integrations
 
-Snapshot: checkout `ea6387d` (2026-10-12). This inventory describes local OS/VM integrations as well as network transport.
+Snapshot: checkout `ea6387d` (2026-10-12), reconciled with the concern repairs through `4e31a32`. This inventory describes local OS/VM integrations as well as network transport.
 
 ## Core Sections (Required)
 
@@ -39,7 +39,7 @@ SSH credentials come from the optional user config. Defaults are `admin` / `admi
 
 The CLI snapshots its caller environment, including values containing `=`, into the daemon request. Host preparation and host task execution use that snapshot; VM task environment construction supplies only the four runner variables (`cmd/offscreen/main.go`; `internal/run/run.go`; `internal/run/host.go`). The snapshot must persist while a job is queued, active, or requeued, so a job resumed after requeue or daemon restart runs with its own caller's environment (old requests without one fall back to the daemon's environment). When the job becomes terminal, `save` writes the request without `HostEnv` in the same statement that records the terminal state, and `transition` drops it from in-memory state; executors run with their own request copy, so no map they read is mutated. Startup `sweep` rewrites terminal rows from earlier versions before serving. A failed write is fail-closed: no completion is published and startup aborts. Retained `--keep` cleanup uses only the job ID. This is logical minimization only; SQLite free pages, journals, and backups can still hold earlier snapshots (C02; `internal/daemon/server.go:save/transition/sweep`; `internal/daemon/env_scrub_test.go`; `DAEMON.md`).
 
-SSH uses `InsecureIgnoreHostKey` by design. The code validates that the supplied guest address parses as an IP and obtains it from Tart, but does not cryptographically verify guest identity. This trusts the ephemeral Tart network; no violation of that boundary was shown, but it remains a real tradeoff (C10; `internal/guest/ssh.go`; `internal/run/transport.go`). [TODO] No credential rotation or secret-retention procedure is defined in the inspected public guides/config.
+SSH uses `InsecureIgnoreHostKey` by design. The code validates that the supplied guest address parses as an IP and obtains it from Tart, but does not cryptographically verify guest identity. This trusts the ephemeral Tart network; no violation of that boundary was shown, but it remains a real tradeoff (C10; `internal/guest/ssh.go`; `internal/run/transport.go`). Retention of job history is bounded by `job_retention` (default seven days) and `offscreen prune` (C13; `docs/config.md`; `DAEMON.md`). [TODO] No credential rotation procedure, and no procedure for purging old backups of the state file, is defined in the inspected public guides/config.
 
 ### 4) Reliability and Failure Behavior
 
@@ -56,7 +56,7 @@ Go logs use `slog` text on stderr. Tart errors include subprocess output; guest 
 
 The CLI exposes status reasons, logs, artifact directories, and job identity. The guest display LaunchAgent writes `display.log` / `display.err`, cited by image setup errors (`cmd/offscreen/main.go`; `internal/image/build.go`). The helper provides a manual input probe (`helper/README.md`).
 
-No metrics exporter, tracing SDK, or external alert destination is configured in the mapped runtime manifests/config. [TODO] Integration latency, disk-growth baselines, and operational alert expectations are not measured by this map.
+No metrics exporter, tracing SDK, or external alert destination is configured in the mapped runtime manifests/config. Each expiry pass logs `deleted`, `failed`, `skipped`, and `recent` counts on stderr, and logs failures at warn/error level (`internal/daemon/expiry.go`). [TODO] Integration latency, real-workload disk-growth baselines, and operational alert expectations are not measured by this map; the only storage measurement is the bounded-page expiry test (`internal/daemon/expiry_test.go`).
 
 ### 6) Evidence
 
@@ -67,6 +67,8 @@ No metrics exporter, tracing SDK, or external alert destination is configured in
 - `internal/run/transport.go`
 - `internal/config/config.go`
 - `internal/daemon/server.go`
+- `internal/daemon/prune.go`
+- `internal/daemon/expiry.go`
 - `DAEMON.md`
 - `helper/README.md`
 - `.goreleaser.yaml`

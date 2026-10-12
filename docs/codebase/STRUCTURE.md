@@ -1,6 +1,6 @@
 # Codebase Structure
 
-Snapshot: checkout `ea6387d` (2026-10-12). Paths are relative to the repository root. Generated builds are excluded from source conventions.
+Snapshot: checkout `ea6387d` (2026-10-12), reconciled with the concern repairs through `4e31a32`. Paths are relative to the repository root. Generated builds are excluded from source conventions.
 
 ## Core Sections (Required)
 
@@ -21,7 +21,7 @@ Snapshot: checkout `ea6387d` (2026-10-12). Paths are relative to the repository 
 | `helper/` | Separate native SwiftPM menu helper, sensors, bridge, tests, install scripts | `helper/Package.swift`; `helper/README.md` |
 | `examples/hello/` | Checked-in SwiftUI app/Xcode project/XCUITest and VM task contract | `examples/hello/README.md`; `examples/hello/.offscreen.toml` |
 | `docs/` | Public config reference and this codebase map; private design notes are ignored | `docs/config.md`; `.gitignore`; `AGENTS.md` |
-| `.github/workflows/` | Go CI configuration | `.github/workflows/ci.yml` |
+| `.github/workflows/` | CI: Go lint/tests, Swift helper build/tests, ShellCheck | `.github/workflows/ci.yml` |
 | `.vscode/` | Portable Swift helper launch configurations | `.vscode/launch.json` |
 | Root guides/config | User instructions, daemon operations, contributor rules, module/tool/lint/release configuration | `README.md`; `DAEMON.md`; `CONTRIBUTING.md`; `AGENTS.md`; `go.mod`; `mise.toml`; `.golangci.yml`; `.goreleaser.yaml` |
 
@@ -29,7 +29,7 @@ Snapshot: checkout `ea6387d` (2026-10-12). Paths are relative to the repository 
 
 ### 2) Entry Points
 
-- `cmd/offscreen/main.go`: `main` checks internal guardian mode before `execute` parses CLI flags and calls command structs' `Run` methods.
+- `cmd/offscreen/main.go`: `main` checks internal guardian mode before `execute` parses CLI flags and calls command structs' `Run` methods (including `PruneCmd` for `offscreen prune`).
 - `cmd/offscreend/main.go`: daemon binary entry; also supports internal guardian mode before normal daemon initialization.
 - `helper/Sources/OffscreenHelper/HelperApp.swift`: native helper application entry; built as the executable declared by `helper/Package.swift`.
 - `examples/hello/Hello/HelloApp.swift`: example application; selected by the checked-in Xcode project/shared scheme (`examples/hello/Hello.xcodeproj/xcshareddata/xcschemes/Hello.xcscheme`).

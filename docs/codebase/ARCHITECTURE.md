@@ -1,6 +1,6 @@
 # Architecture
 
-Snapshot: checkout `ea6387d` (2026-10-12). Boundaries and flows are inferred only from the identified source responsibilities; they are not a claim of a formal architecture framework.
+Snapshot: checkout `ea6387d` (2026-10-12), reconciled with the concern repairs through `4e31a32`. Boundaries and flows are inferred only from the identified source responsibilities; they are not a claim of a formal architecture framework.
 
 ## Core Sections (Required)
 
@@ -23,7 +23,7 @@ Swift helper -> desktop snapshot / actions -> daemon host policy
 ```
 
 1. The CLI discovers and validates `.offscreen.toml`, checks task/direct-command form, captures the caller's environment, and submits a request. Named commands retain shell semantics; direct commands retain argv boundaries (`cmd/offscreen/main.go`; `internal/project/project.go`).
-2. The daemon loads the contract and resolves the request, assigns identity/artifact paths, persists it in `jobs.sqlite`, and queues it. SQLite stores job metadata plus request JSON, including the environment snapshot; a separate singleton `host_policy` table persists manual pause and timed hold (`internal/daemon/server.go`; `internal/daemon/protocol.go`).
+2. The daemon loads the contract and resolves the request, assigns identity/artifact paths, persists it in `jobs.sqlite`, and queues it. SQLite stores job metadata plus request JSON, including the caller environment snapshot while the job is nonterminal (it is dropped in the write that records a terminal state, C02); a separate singleton `host_policy` table persists manual pause and timed hold (`internal/daemon/server.go`; `internal/daemon/protocol.go`).
 3. Every 200 ms the scheduler examines queued work. Blocked work holds later jobs in its lane; the other lane can proceed. VM capacity is clamped to one/two, with a failed/low memory probe reducing it to one. Host capacity is one. If either job is exclusive, jobs with the same project name are serialized across lanes (`internal/daemon/server.go`, `schedule` / `admit`).
 4. VM execution runs optional host preparation, clones `job-<id>`, boots headless with read-only worktree and writable artifact/cache shares, waits for SSH/GUI, then copies the worktree/prepared products using tar over SSH. The worktree copy excludes `.git` and `.build`. Guest setup precedes the command; only four explicit runner environment variables are supplied (`internal/run/run.go`; `internal/run/transport.go`).
 5. Host admission checks fresh helper observations, permissions/tap, unlocked/awake session, idle camera/microphone, idle threshold, and pause state, then gives a ten-second countdown. `ExecuteHost` runs preparation followed by the task in the real checkout with the caller environment and four task variables. It skips guest setup and VM copies (`internal/daemon/host.go`; `internal/run/host.go`).
@@ -58,7 +58,7 @@ These are observed/documented boundaries, not additional enforceable rules.
 | Atomic config replacement | `internal/config/config.go`; `internal/config/current_image.go` | Protect complete writes and preserve unrelated TOML on image updates |
 | Native shared UI model | `helper/Sources/OffscreenHelper/HelperApp.swift` | Main-actor helper state drives menu, panel, and notifications |
 
-Startup obtains the daemon lock, waits for prior host cleanup, opens SQLite, loads host policy, and sweeps owned VM leftovers before scheduling. HTTP serves on the per-user Unix socket (`cmd/offscreend/main.go`; `internal/daemon/server.go`).
+Startup obtains the daemon lock, waits for prior host cleanup, opens SQLite, loads host policy, sweeps owned VM leftovers, scrubs caller environments from terminal rows left by earlier versions, and runs the first expiry pass before scheduling. HTTP serves on the per-user Unix socket (`cmd/offscreend/main.go`; `internal/daemon/server.go`).
 
 A positive submission timeout sets one absolute deadline covering both queue wait and execution. Queue expiry returns 75; command execution preserves its exit status, while infrastructure failure uses 70. States are `queued`, `preparing`, `running`, `collecting`, then `done`, `failed`, or `cancelled`; host take-back can requeue the same identity after cleanup (`internal/daemon/server.go`; `internal/daemon/protocol.go`; `internal/exitcode/exitcode.go`).
 
@@ -82,6 +82,8 @@ Restart fails active jobs and queued attached jobs; detached queued jobs may res
 - `internal/daemon/protocol.go`
 - `internal/daemon/prune.go`
 - `internal/daemon/expiry.go`
+- `internal/daemon/env_scrub_test.go`
+- `internal/daemon/expiry_test.go`
 - `internal/run/run.go`
 - `internal/run/process.go`
 - `helper/Sources/OffscreenHelper/HelperApp.swift`

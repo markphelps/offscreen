@@ -1,6 +1,6 @@
 # Coding Conventions
 
-Snapshot: checkout `ea6387d` (2026-10-12). Normative rules come from `AGENTS.md` and `CONTRIBUTING.md`; observed patterns are identified by source paths.
+Snapshot: checkout `ea6387d` (2026-10-12), reconciled with the concern repairs through `4e31a32`. Normative rules come from `AGENTS.md` and `CONTRIBUTING.md`; observed patterns are identified by source paths.
 
 ## Core Sections (Required)
 
@@ -41,13 +41,13 @@ Public symbols use ordinary Go exports, with comments on shared package function
 - Runner results contain identity, artifacts, code, error, VM name, and retention state. Guest SSH command errors preserve command exit status; infrastructure failures use 70. Queue expiry uses 75; client-side usage/config errors normally use 1 (`internal/run/run.go`; `internal/exitcode/exitcode.go`; `cmd/offscreen/main.go`).
 - Cleanup uncertainty is explicit. The CLI labels an artifact line with “cleanup unconfirmed” when cancellation cannot confirm cleanup; host guardian status failures use `ErrCleanupUnconfirmed` (`cmd/offscreen/main.go`; `internal/run/process.go`).
 - Go logging uses `log/slog` text output on stderr, selected by log level. Task stdout is streamed as task output; host preparation sends both streams to stderr (`AGENTS.md`; `internal/logging/logging.go`; `internal/run/run.go`; `internal/run/host.go`). Control commands such as status, artifact lookup, and detached submission intentionally print their result to stdout (`cmd/offscreen/main.go`).
-- [TODO] A general logging redaction rule or centrally required context-field schema is not defined in the inspected guides/config. Full caller environments are persisted with each request and, at this checkout, remain after the job ends; public guides require protecting the state file and its backups (`DAEMON.md`; `docs/config.md`). Scrubbing terminal records is a planned repair (C02). Do not infer redaction from owner-only permissions.
+- [TODO] A general logging redaction rule or centrally required context-field schema is not defined in the inspected guides/config. Full caller environments are persisted with each request while it is queued, active, or requeued; the daemon removes them from the record and memory when the job becomes terminal (C02, fixed; `internal/daemon/server.go`, `save` / `transition`). Removal is logical, so public guides still require protecting the state file, its journal, and backups (`DAEMON.md`; `docs/config.md`). Do not infer redaction from owner-only permissions.
 
 ### 5) Testing Conventions
 
 Go tests are co-located `_test.go` files using standard `testing` plus Testify `require`; source changes should include behavioral tests (`AGENTS.md`; `CONTRIBUTING.md`; `internal/project/project_test.go`). Test inputs use temporary files/directories and explicit environment changes rather than app-specific production settings (`internal/run/host_test.go`). Guardian tests enter subprocess mode through `TestMain`, not package initialization (`internal/run/process_test.go`).
 
-Swift tests are in `helper/Tests/OffscreenHelperTests/HelperTests.swift`; Hello UI tests are separate under `examples/hello/HelloUITests/`. No numerical coverage threshold is configured in `mise.toml` or `.github/workflows/ci.yml`. Known coverage-command failure and hardware checks are documented in [TESTING.md](TESTING.md).
+Swift tests are in `helper/Tests/OffscreenHelperTests/HelperTests.swift`; Hello UI tests are separate under `examples/hello/HelloUITests/`. No numerical coverage threshold is configured in `mise.toml` or `.github/workflows/ci.yml`, and CI does not run coverage. `go test ./... -cover` passes since the C04 repair; run it before changing guardian or subprocess code. Daemon tests use isolated SQLite/socket state and a controlled clock for expiry (`internal/daemon/expiry_test.go`), never the user's installed daemon. Coverage commands and hardware checks are documented in [TESTING.md](TESTING.md).
 
 ### 6) Evidence
 
@@ -61,4 +61,5 @@ Swift tests are in `helper/Tests/OffscreenHelperTests/HelperTests.swift`; Hello 
 - `internal/project/project.go`
 - `internal/run/process.go`
 - `internal/run/host_test.go`
+- `internal/daemon/expiry_test.go`
 - `helper/Tests/OffscreenHelperTests/HelperTests.swift`

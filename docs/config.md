@@ -53,7 +53,7 @@ setup = "brew bundle --file Brewfile"  # if Homebrew is installed in your image
 
 The default golden image does not install mise, Homebrew, or your project's packages. To use a package manager in the guest, add it with an `[image] setup` script in the user config, or install it in your project setup script. The checked-in [Hello contract](../examples/hello/.offscreen.toml) uses none of them and needs no `[guest]` section.
 
-Every task gets `OFFSCREEN_OUT` (write screenshots and test results here), `OFFSCREEN_JOB` (job ID), `OFFSCREEN_LANE` (`vm` or `host`), and `OFFSCREEN_CACHE` (per-project persistent cache). VM paths are guest paths; host paths refer to the real machine. A host task inherits the caller's environment with these four values overwritten. A VM task does **not** receive the host environment wholesale. Treat the daemon's owner-only job database and backups as sensitive: submissions store the caller's host environment for preparation and share expansion.
+Every task gets `OFFSCREEN_OUT` (write screenshots and test results here), `OFFSCREEN_JOB` (job ID), `OFFSCREEN_LANE` (`vm` or `host`), and `OFFSCREEN_CACHE` (per-project persistent cache). VM paths are guest paths; host paths refer to the real machine. A host task inherits the caller's environment with these four values overwritten. A VM task does **not** receive the host environment wholesale. Treat the daemon's owner-only job database and backups as sensitive: submissions store the caller's host environment for preparation and share expansion. The daemon removes it from a job's record when the job finishes, but older copies can remain in SQLite free pages, its journal and backups (see [DAEMON.md](../DAEMON.md)).
 
 ## User config
 

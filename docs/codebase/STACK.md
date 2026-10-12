@@ -1,6 +1,6 @@
 # Technology Stack
 
-Snapshot: checkout `ea6387d` (2026-10-12). Paths below are relative to the repository root.
+Snapshot: checkout `ea6387d` (2026-10-12), reconciled with the concern repairs through `4e31a32`. Paths below are relative to the repository root.
 
 ## Core Sections (Required)
 
@@ -38,7 +38,7 @@ Indirect requirements in `go.mod`: go-humanize 1.0.1, uuid 1.6.0, go-isatty 0.0.
 | golangci-lint 2.13.2 | Lint, format, modernize | `mise.toml`; `.golangci.yml` |
 | shellcheck 0.11.0 | Shell script checks | `mise.toml`; `CONTRIBUTING.md` |
 | GoReleaser 2.17.1 | Archives, checksums, cask generation | `mise.toml`; `.goreleaser.yaml` |
-| Xcode / Swift tools | Helper and Hello example | `CONTRIBUTING.md`; `helper/Package.swift` |
+| Xcode / Swift tools | Helper and Hello example; Swift 6.2 or newer for the helper | `CONTRIBUTING.md`; `helper/Package.swift`; `.github/workflows/ci.yml` |
 | VS Code Swift launch configurations | Debug/release helper launch tasks | `.vscode/launch.json` |
 
 ### 4) Key Commands
@@ -53,10 +53,12 @@ mise run lint
 mise run fmt
 mise run go:modernize
 go build ./...
-cd helper && swift build && swift test
+go test ./... -cover
+mise run helper:test   # swift build + swift test for helper/
+mise run shellcheck    # pinned ShellCheck on every tracked *.sh
 ```
 
-Formatting and modernize tasks can edit source (`CONTRIBUTING.md`). Real VM checks are described in [TESTING.md](TESTING.md).
+Formatting and modernize tasks can edit source (`CONTRIBUTING.md`). CI on `macos-15` runs lint, tests, `helper:test` (with Xcode 26.3 selected through `DEVELOPER_DIR`), and `shellcheck`; it does not run coverage (`.github/workflows/ci.yml`). Real VM checks are described in [TESTING.md](TESTING.md).
 
 ### 5) Environment and Config
 
@@ -73,6 +75,7 @@ Formatting and modernize tasks can edit source (`CONTRIBUTING.md`). Real VM chec
 - `mise.toml`
 - `.golangci.yml`
 - `.goreleaser.yaml`
+- `.github/workflows/ci.yml`
 - `internal/config/config.go`
 - `internal/project/project.go`
 - `README.md`
