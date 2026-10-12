@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder}/helper",
+            "name": "Debug OffscreenHelper (helper)",
+            "target": "OffscreenHelper",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug OffscreenHelper (helper)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder}/helper",
+            "name": "Release OffscreenHelper (helper)",
+            "target": "OffscreenHelper",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release OffscreenHelper (helper)"
+        }
+    ]
+}
