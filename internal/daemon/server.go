@@ -83,6 +83,10 @@ type Server struct {
 	stop        context.CancelFunc
 	fatal       chan struct{}
 	fatalErr    error
+	// pruneMu serializes expiry runs; now (guarded by mu) is the clock used to
+	// derive prune cutoffs and is replaceable in tests.
+	pruneMu sync.Mutex
+	now     func() time.Time
 }
 
 func Open(cfg config.Config) (*Server, error) {
@@ -139,7 +143,7 @@ func open(cfg config.Config, executor func(context.Context, run.Options) run.Res
 		return nil, err
 	}
 	ctx, stop := context.WithCancel(context.Background())
-	s := &Server{db: db, lock: lock, cfg: cfg, executor: executor, tart: vm, memory: memory, jobs: make(map[string]*worker), ctx: ctx, stop: stop, fatal: make(chan struct{})}
+	s := &Server{db: db, lock: lock, cfg: cfg, executor: executor, tart: vm, memory: memory, jobs: make(map[string]*worker), ctx: ctx, stop: stop, fatal: make(chan struct{}), now: time.Now}
 	if err := s.loadHostPolicy(); err != nil {
 		stop()
 		_ = db.Close()
@@ -820,6 +824,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	mux.HandleFunc("POST /jobs/{id}/cancel", s.handleCancel)
 	mux.HandleFunc("POST /jobs/{id}/input", s.handleInput)
 	mux.HandleFunc("GET /jobs/{id}/stream", s.handleStream)
+	mux.HandleFunc("POST /prune", s.handlePrune)
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() { // #nosec G118 -- shutdown must run after the serving context is cancelled
 		select {

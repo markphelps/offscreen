@@ -103,6 +103,25 @@ func (c Client) Cancel(ctx context.Context, id string) (Job, error) {
 	return job, err
 }
 
+// Prune previews or applies completed-job expiry in the daemon, which owns the
+// job records and directories.
+func (c Client) Prune(ctx context.Context, req PruneRequest) (PruneReport, error) {
+	b, err := json.Marshal(req)
+	if err != nil {
+		return PruneReport{}, err
+	}
+	resp, err := c.call(ctx, http.MethodPost, "/prune", bytes.NewReader(b))
+	if err != nil {
+		return PruneReport{}, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var report PruneReport
+	if err := json.NewDecoder(resp.Body).Decode(&report); err != nil {
+		return PruneReport{}, fmt.Errorf("decode prune response: %w", err)
+	}
+	return report, nil
+}
+
 // HostAction sends a user-initiated host-lane control action over the private socket.
 func (c Client) HostAction(ctx context.Context, action, id string) (HostStatus, error) {
 	path := "/host/" + action
