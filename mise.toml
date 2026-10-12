@@ -12,6 +12,10 @@ run = "mkdir -p bin && go build -o bin/offscreen ./cmd/offscreen && go build -o 
 description = "Build and bundle the native host helper"
 run = "cd helper && swift build && ./scripts/bundle.sh"
 
+[tasks."helper:test"]
+description = "Build and unit-test the Swift helper without bundling, installing or launching it"
+run = "swift build --package-path helper && swift test --package-path helper"
+
 [tasks."helper:install"]
 description = "Install the native helper LaunchAgent"
 run = "helper/scripts/install.sh"
@@ -23,6 +27,10 @@ run = "go test ./..."
 [tasks.lint]
 description = "Lint Go code"
 run = "golangci-lint run ./..."
+
+[tasks.shellcheck]
+description = "Run ShellCheck on every tracked shell script"
+run = "git ls-files -z '*.sh' | xargs -0 shellcheck"
 
 [tasks.fmt]
 description = "Format Go code"

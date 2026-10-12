@@ -16,3 +16,31 @@ jobs:
         run: mise run lint
       - name: Unit tests
         run: mise run test
+
+  helper:
+    runs-on: macos-15
+    permissions:
+      contents: read
+    env:
+      # Package.swift needs Swift 6.2; the image's default Xcode 16.4 has Swift 6.1.
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v3
+        with:
+          install: false
+      # Builds and runs the pure XCTest suite only: no bundle, install or launch.
+      - name: Swift helper build and unit tests
+        run: mise run helper:test
+
+  shellcheck:
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v3
+        with:
+          install_args: shellcheck
+      - name: ShellCheck
+        run: mise run shellcheck
