@@ -15,15 +15,17 @@ if [ -z "$offscreen_bin" ]; then offscreen_bin="$(go env GOPATH)/bin"; fi
 export PATH="$offscreen_bin:$PATH"
 offscreen image build
 offscreen daemon install
+# If macOS prompts, allow Offscreen Daemon access to the Local Network.
+# Check System Settings > Privacy & Security > Local Network before VM jobs.
 cd examples/hello
 offscreen run hello test-ui
 ```
 
-`go install` puts both executables in `$(go env GOPATH)/bin` (or `GOBIN`, if you set it). Add that directory to your shell's persistent `PATH` for later sessions. `daemon install` finds `offscreend` beside the `offscreen` executable, or on `PATH`, copies it to a stable user-owned directory, and starts a launchd agent. It does not auto-start if you skip that step. To build into a local directory instead, from the repo root run `go build -o bin/offscreen ./cmd/offscreen` and `go build -o bin/offscreend ./cmd/offscreend`, then use `bin/offscreen` or add `bin` to `PATH`. Keep both binaries together before `daemon install`; reinstall the daemon after rebuilding it. `offscreen daemon uninstall` removes its LaunchAgent.
+`go install` puts both executables in `$(go env GOPATH)/bin` (or `GOBIN`, if you set it). Add that directory to your shell's persistent `PATH` for later sessions. `daemon install` finds `offscreend` beside the `offscreen` executable, or on `PATH`, installs it in the signed user-owned `OffscreenDaemon.app` under the state directory, registers it with Launch Services, and starts a launchd agent. VM jobs need the daemon's Local Network permission to reach the Tart guest. If prompted, allow **Offscreen Daemon** in System Settings > Privacy & Security > Local Network before running Hello. If SSH repeatedly reports “no route to host,” check that setting and retry; the message can also indicate other routing problems. A grant is not established by the install command alone. It does not auto-start if you skip that step. To build into a local directory instead, from the repo root run `go build -o bin/offscreen ./cmd/offscreen` and `go build -o bin/offscreend ./cmd/offscreend`, then use `bin/offscreen` or add `bin` to `PATH`. Keep both binaries together before `daemon install`; reinstall the daemon after rebuilding it. `offscreen daemon uninstall` removes its LaunchAgent.
 
 The Hello example builds its small macOS app on the host, then runs XCUITest in the guest. You can also run `offscreen run hello launch` to save a screenshot. A blocking run streams command output and ends with a job ID and artifact directory on stderr; the guest clone is normally deleted. See [the example](examples/hello/README.md) for the tasks and [the config reference](docs/config.md) for your own repo.
 
-A Homebrew cask is configured for `markphelps/homebrew-tap`, but **has not been published**. Once a release and the tap exist, `brew install --cask markphelps/tap/offscreen` will be an alternative to building from source. The cask is for the two Go binaries only; the native host helper is built and installed separately. The release binaries are unsigned and unnotarized: the cask removes quarantine from those two staged binaries, which bypasses Gatekeeper's verification. Install only if you trust the source; signing and notarization are preferable.
+A Homebrew cask is configured for `markphelps/homebrew-tap`, but **has not been published**. Once a release and the tap exist, `brew install --cask markphelps/tap/offscreen` will be an alternative to building from source. The cask is for the two Go binaries only; the native host helper is built and installed separately. The release binaries are unsigned and unnotarized; the locally installed daemon app uses ad-hoc signing only. The cask removes quarantine from the two staged binaries, which bypasses Gatekeeper's verification. Install only if you trust the source; signing and notarization are preferable.
 
 ## Commands
 
