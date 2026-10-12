@@ -23,7 +23,7 @@ When macOS asks, allow **Input Monitoring** and **Notifications** for Offscreen 
 
 ## Input discrimination probe
 
-Physical versus injected input is **not yet proven** on this Mac. A successful build, a PID guess, or a permission denial does not settle that question. Before relying on automatic return detection, run the installed app in probe mode:
+Each installation must check physical versus injected input for itself before turning on automatic return detection. A successful build, a PID guess, or a permission denial does not settle that question for your Mac. Run the installed app in probe mode:
 
 ```sh
 launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/dev.offscreen.helper.plist"
@@ -32,7 +32,7 @@ launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/dev.offscreen.helpe
 
 Grant Input Monitoring if asked. Move a physical mouse and press a real key. Then send a synthetic mouse move from a separately trusted input-injection tool. The injector may need its own Accessibility permission; the helper does not. Record the printed `pid` and `sourceState` for both events, including the injector's actual PID. Do not count a denied tap or an event-free run as a negative discrimination result. Stop the foreground probe with Ctrl-C. Restart only this helper with `launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/dev.offscreen.helper.plist"`. The standalone `probe.swift` is the small source version of this experiment; use the installed bundle for a stable Input Monitoring identity.
 
-The current event-tap filter treats `pid == 0` as a candidate for physical input. Automatic return detection stays off until the human probe confirms it. If the fields distinguish physical events on this Mac, enable the filter and restart the helper:
+The current event-tap filter treats `pid == 0` as a candidate for physical input. Automatic return detection stays off until you enable it after your own probe. For reference, one tested Apple silicon Mac reported physical mouse, key, click, and scroll events with `pid` 0 and `sourceState` 1. A synthetic mouse move from a separate injector reported that injector's nonzero PID and `sourceState` 0. That result is from one machine and one injector; it does not show what your Mac reports. If the fields distinguish physical events on your Mac, enable the filter and restart the helper:
 
 ```sh
 defaults write dev.offscreen.helper VerifiedInputFilter -bool YES
@@ -44,6 +44,6 @@ If the observed streams cannot be distinguished, leave that setting off and enab
 defaults write dev.offscreen.helper ManualReturn -bool YES
 ```
 
-Restart the helper after changing that setting. In fallback mode, the helper does not detect a mid-run return automatically. Select **I'm back (start grace period)** in its menu to get a notification and a 60-second grace period by default. Select **Take back now** to cancel an active host job (including one still preparing) and put it at the front of the queue after cleanup. Failed controls remain visible as errors in the menu until a successful action or dismissal. Reset with `defaults delete dev.offscreen.helper ManualReturn` only after a successful physical-input test. A return while a job is still preparing cancels preparation before the task launches and requeues it after cleanup. A return during a running task does not stop it immediately. At grace expiry, the daemon requeues it if the desktop is still in use or the helper signal is stale. It lets the current task continue if the desktop is idle again. Later host jobs still wait for a fresh idle gate.
+Restart the helper after changing that setting. In fallback mode, the helper does not detect a mid-run return automatically. Select **I'm back (start grace period)** in its menu to get a notification and a 60-second grace period by default. Select **Take back now** to cancel an active host job (including one still preparing) and put it at the front of the queue after cleanup. Failed controls remain visible as errors in the menu until a successful action or dismissal. **I'm back** and **Take back now** are also available in the menu when automatic detection is on. Reset with `defaults delete dev.offscreen.helper ManualReturn` only after a successful physical-input test. A return while a job is still preparing cancels preparation before the task launches and requeues it after cleanup. A return during a running task does not stop it immediately. At grace expiry, the daemon requeues it if the desktop is still in use or the helper signal is stale. It lets the current task continue if the desktop is idle again. Later host jobs still wait for a fresh idle gate.
 
 Use a short owner-only `OFFSCREEN_STATE_DIR` for isolated testing. Never point the helper at another user's socket. Do not use a hardware-sensitive host task before you have checked lock, display, microphone, camera, countdown, and notification behavior on your own Mac. A harmless `sleep` or `echo` task is sufficient for the first test.
