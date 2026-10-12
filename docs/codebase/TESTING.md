@@ -1,6 +1,6 @@
 # Testing Patterns
 
-Snapshot: checkout `ea6387d` (2026-10-12). Results below describe this documentation session, not a guarantee about physical hardware behavior.
+Snapshot: checkout `ea6387d` (2026-10-12), updated for the C04 coverage repair. Results below describe documentation and repair sessions, not a guarantee about physical hardware behavior.
 
 ## Core Sections (Required)
 
@@ -19,8 +19,9 @@ go test ./internal/run -run 'TestExecuteHostPrepareEnvironmentArgvAndExit|TestGu
 # Separate native helper suite, from repository root
 (cd helper && swift test)
 
-# Coverage diagnostic: fails two guardian stderr assertions at this checkout (C04, planned repair)
+# Coverage; guardian subprocess counters are merged into the run package result (C04 repaired)
 go test ./... -cover
+go test ./internal/run -cover -coverprofile=run.cov
 
 # Optional real image smoke check; choose an existing image and isolated config
 OFFSCREEN_IMAGE_SMOKE=<image-name> OFFSCREEN_CONFIG=<config-path> go test ./internal/image -run TestImageSmoke -count=1
@@ -54,7 +55,7 @@ Tests use temporary directories, environment overrides, and explicit caller-envi
 
 `TestImageSmoke` clones the explicitly selected image and cleans only that owned clone (`internal/image/smoke_test.go`). Helper tests use supplied values for sensor/filter decisions; they do not prove the input provenance filter on any particular Mac. Real-hardware evidence comes only from the human acceptance recorded under C01 (`helper/Tests/OffscreenHelperTests/HelperTests.swift`; `helper/README.md`).
 
-An observed failure mode is coverage instrumentation on the re-executed guardian test binary: it writes `warning: GOCOVERDIR not set, no coverage data emitted` to the same stderr being asserted as task output (`internal/run/process.go`; `internal/run/process_test.go`; `internal/run/host_test.go`; terminal results below).
+Guardian tests re-execute the coverage-instrumented test binary, and `guardianMain` replaces that process's environment with the task's. Before the C04 repair, the guardian exited without `GOCOVERDIR`, so the coverage runtime wrote `warning: GOCOVERDIR not set, no coverage data emitted` into the task's stderr. `MaybeGuardian` now restores the guardian's own launch value of `GOCOVERDIR` after the task and cleanup finish, just before exit. The task still sees only its submitted environment, exact stdout/stderr assertions are unchanged, and guardian counters land in the directory `go test` provides (`internal/run/process.go`; `TestGuardianCoverageSettingStaysOutOfTask` in `internal/run/process_test.go`; `internal/run/host_test.go`). Limit: a coverage-instrumented binary launched without `GOCOVERDIR` still prints that warning from its guardians, because the guardian's launch environment has no directory to restore. Release builds are not coverage-instrumented.
 
 ### 5) Coverage and Quality Signals
 
@@ -64,13 +65,13 @@ Session verification on Go 1.27.0 darwin/arm64:
 
 | Check | Observed result |
 |-------|-----------------|
-| `go test ./...` | Passed; Go reported cached package results |
-| `(cd helper && swift test)` | Passed: 7 XCTest cases, zero failures |
-| `go test ./... -cover` | Failed in `internal/run` at `TestExecuteHostPrepareEnvironmentArgvAndExit` and `TestGuardianOutputExitAndFastLeader`; additional coverage warnings broke exact stderr comparisons |
-| Focused two tests without coverage, `-count=1` | Passed in 1.284 seconds |
+| `go test ./... -count=1` | Passed (after C04 repair) |
+| `(cd helper && swift test)` | Passed: 7 XCTest cases, zero failures (documentation session) |
+| `go test ./... -cover -count=1` | Before C04 repair: failed in `internal/run` at `TestExecuteHostPrepareEnvironmentArgvAndExit` and `TestGuardianOutputExitAndFastLeader`. After repair: passed |
+| Focused output tests (`TestGuardianOutputExitAndFastLeader`, `TestExecuteHostPrepareEnvironmentArgvAndExit`, `TestGuardianCoverageSettingStaysOutOfTask`), `-count=1`, with and without `-cover` | Passed both ways after repair |
 | Real VM smoke/Hello/hardware probe | [TODO] Not executed in this documentation session. Earlier human host-lane acceptance up to `c037c4c` is summarized under C01 in [CONCERNS.md](CONCERNS.md) |
 
-Partial coverage from the failing run: CLI 48.5%, config 66.4%, daemon 77.7%, guest 37.8%, image 11.0%, project 89.9%, run 45.8% (failed suite). Daemon entrypoint, logging, and Tart reported 0.0%; exitcode had no test files. These are diagnostic package percentages, not a successful whole-suite coverage baseline.
+Package coverage from the passing `go test ./... -cover -count=1` run after the C04 repair: CLI 48.5%, config 66.4%, daemon 77.7%, guest 37.8%, image 11.0%, project 89.9%, run 62.3%. The run figure includes guardian subprocess counters (`guardianMain` 78.0% in the profile); the earlier failing run reported 45.8% without them. Each figure counts only its own package's statements, so guardian code executed by daemon tests is not credited to `internal/run`. Daemon entrypoint, logging, and Tart have no tests; exitcode has no test files. These are observed values, not an enforced threshold.
 
 [TODO] No historical flake catalog or benchmark baseline was established. Production TODO/FIXME/HACK search also found no test TODO markers in the searched Go/helper source trees; lack of markers does not imply complete coverage.
 
@@ -88,4 +89,4 @@ Partial coverage from the failing run: CLI 48.5%, config 66.4%, daemon 77.7%, gu
 - `helper/Tests/OffscreenHelperTests/HelperTests.swift`
 - `examples/hello/README.md`
 
-Terminal evidence collected on 2026-10-12: the four Go/Swift commands and their outcomes recorded in section 5. Coverage failure is reproducible evidence about the instrumented test setup; it is not evidence that normal task output is corrupted in release binaries.
+Terminal evidence collected on 2026-10-12: the Go/Swift commands and their outcomes recorded in section 5. The pre-repair coverage failure was about the instrumented test setup; it was not evidence that normal task output is corrupted in release binaries.
