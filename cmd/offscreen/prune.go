@@ -177,22 +177,22 @@ func (c *ImagePruneCmd) Run() error {
 		}
 		return requireNoActiveVMJobs(ctx, client.Jobs)
 	}
-	run := func(ctx context.Context, apply bool) (image.PruneReport, error) {
-		return image.Prune(ctx, path, apply, guard)
+	run := func(ctx context.Context, apply bool, confirmed []string) (image.PruneReport, error) {
+		return image.Prune(ctx, path, apply, confirmed, guard)
 	}
 	return c.prune(context.Background(), run, guard, stdinConfirmer(), os.Stdout, os.Stderr)
 }
 
 // prune previews or deletes golden images other than current_image. On a
 // terminal without -f it lists the selection and a warning on stderr, checks
-// guard so it does not ask when deletion would be refused, and deletes only
-// after the user answers y.
-func (c *ImagePruneCmd) prune(ctx context.Context, run func(context.Context, bool) (image.PruneReport, error), guard func(context.Context) error, prompt confirmer, stdout, stderr io.Writer) error {
+// guard so it does not ask when deletion would be refused, and after the
+// user answers y deletes only the images it listed.
+func (c *ImagePruneCmd) prune(ctx context.Context, run func(context.Context, bool, []string) (image.PruneReport, error), guard func(context.Context) error, prompt confirmer, stdout, stderr io.Writer) error {
 	apply, ask, err := pruneMode("image prune", c.DryRun, c.Force, prompt)
 	if err != nil {
 		return err
 	}
-	report, err := run(ctx, apply)
+	report, err := run(ctx, apply, nil)
 	if err != nil {
 		return err
 	}
@@ -213,7 +213,11 @@ func (c *ImagePruneCmd) prune(ctx context.Context, run func(context.Context, boo
 			_, err := fmt.Fprintln(stdout, "summary  cancelled; nothing changed")
 			return err
 		}
-		if report, err = run(ctx, true); err != nil {
+		confirmed := make([]string, 0, len(report.Eligible))
+		for _, e := range report.Eligible {
+			confirmed = append(confirmed, e.Name)
+		}
+		if report, err = run(ctx, true, confirmed); err != nil {
 			return err
 		}
 	}

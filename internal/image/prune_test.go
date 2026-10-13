@@ -52,7 +52,7 @@ func inventory() []tart.VM {
 
 func TestPruneDryRunSelectsOnlyStoppedNonCurrentGoldenImages(t *testing.T) {
 	client := &fakeTart{vms: inventory()}
-	report, err := prune(context.Background(), client, current, false)
+	report, err := prune(context.Background(), client, current, false, nil)
 	require.NoError(t, err)
 	require.Equal(t, []PruneEntry{{Name: older}, {Name: oldest}}, report.Eligible)
 	require.Equal(t, []PruneEntry{{Name: "offscreen-20260701-xcode25.4-dddddddddddd", Reason: "running"}}, report.Skipped)
@@ -62,7 +62,7 @@ func TestPruneDryRunSelectsOnlyStoppedNonCurrentGoldenImages(t *testing.T) {
 
 func TestPruneApplyDeletesAndReportsFailures(t *testing.T) {
 	client := &fakeTart{vms: inventory(), failOn: oldest}
-	report, err := prune(context.Background(), client, current, true)
+	report, err := prune(context.Background(), client, current, true, nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{older}, client.deleted)
 	require.Equal(t, []PruneEntry{{Name: older}}, report.Deleted)
@@ -71,14 +71,14 @@ func TestPruneApplyDeletesAndReportsFailures(t *testing.T) {
 
 func TestPruneRefusesWithoutCurrentImage(t *testing.T) {
 	client := &fakeTart{vms: inventory()}
-	_, err := prune(context.Background(), client, "", true)
+	_, err := prune(context.Background(), client, "", true, nil)
 	require.ErrorContains(t, err, "no current_image")
 	require.Empty(t, client.deleted)
 }
 
 func TestPruneRefusesWhenCurrentImageIsMissingFromTart(t *testing.T) {
 	client := &fakeTart{vms: inventory()[1:]}
-	_, err := prune(context.Background(), client, current, true)
+	_, err := prune(context.Background(), client, current, true, nil)
 	require.ErrorContains(t, err, "not in tart list")
 	require.Empty(t, client.deleted)
 }
@@ -96,7 +96,7 @@ func TestPruneGuardRunsUnderLockOnlyWhenApplying(t *testing.T) {
 		require.ErrorIs(t, unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB), unix.EWOULDBLOCK)
 		return guardErr
 	}
-	_, err := Prune(context.Background(), path, true, guard)
+	_, err := Prune(context.Background(), path, true, nil, guard)
 	require.ErrorIs(t, err, guardErr)
 	require.Equal(t, 1, calls)
 
@@ -108,7 +108,18 @@ func TestPruneGuardRunsUnderLockOnlyWhenApplying(t *testing.T) {
 
 func TestPruneDeletesNothingWhenTartCannotList(t *testing.T) {
 	client := &fakeTart{listErr: errors.New("tart missing")}
-	_, err := prune(context.Background(), client, current, true)
+	_, err := prune(context.Background(), client, current, true, nil)
 	require.ErrorContains(t, err, "tart missing")
 	require.Empty(t, client.deleted)
+}
+
+func TestPruneDeletesOnlyConfirmedImages(t *testing.T) {
+	// current_image moved to a new build while the user was asked about
+	// older; the new previous image (oldest here) was never shown.
+	client := &fakeTart{vms: inventory()}
+	report, err := prune(context.Background(), client, current, true, []string{older})
+	require.NoError(t, err)
+	require.Equal(t, []string{older}, client.deleted)
+	require.Equal(t, []PruneEntry{{Name: older}}, report.Deleted)
+	require.Contains(t, report.Skipped, PruneEntry{Name: oldest, Reason: "not in the confirmed selection"})
 }

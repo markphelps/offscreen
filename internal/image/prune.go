@@ -38,11 +38,14 @@ type vmClient interface {
 }
 
 // Prune previews or deletes golden images other than the configured
-// current_image. Running images are skipped. When apply is set, guard runs
+// current_image. Running images are skipped. A non-nil confirmed limits
+// deletion to the images a user agreed to delete after a preview; any other
+// image, such as the previous current_image after a build published during
+// the prompt, is skipped. When apply is set, guard runs
 // under the image lock before anything is read, so no image build can publish
 // between the caller's safety check and the deletes; a guard error deletes
 // nothing.
-func Prune(ctx context.Context, path string, apply bool, guard func(context.Context) error) (PruneReport, error) {
+func Prune(ctx context.Context, path string, apply bool, confirmed []string, guard func(context.Context) error) (PruneReport, error) {
 	unlock, err := lockImages(path)
 	if err != nil {
 		return PruneReport{}, err
@@ -57,10 +60,10 @@ func Prune(ctx context.Context, path string, apply bool, guard func(context.Cont
 	if err != nil {
 		return PruneReport{}, err
 	}
-	return prune(ctx, tart.Client{}, cfg.CurrentImage, apply)
+	return prune(ctx, tart.Client{}, cfg.CurrentImage, apply, confirmed)
 }
 
-func prune(ctx context.Context, client vmClient, current string, apply bool) (PruneReport, error) {
+func prune(ctx context.Context, client vmClient, current string, apply bool, confirmed []string) (PruneReport, error) {
 	report := PruneReport{Current: current, Apply: apply}
 	if current == "" {
 		return report, errors.New("no current_image is set; run offscreen image build before pruning images")
@@ -80,6 +83,11 @@ func prune(ctx context.Context, client vmClient, current string, apply bool) (Pr
 		entry := PruneEntry{Name: vm.Name}
 		if vm.Running {
 			entry.Reason = "running"
+			report.Skipped = append(report.Skipped, entry)
+			continue
+		}
+		if confirmed != nil && !slices.Contains(confirmed, vm.Name) {
+			entry.Reason = "not in the confirmed selection"
 			report.Skipped = append(report.Skipped, entry)
 			continue
 		}

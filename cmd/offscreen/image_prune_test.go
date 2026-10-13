@@ -44,15 +44,17 @@ func TestImagePruneFlags(t *testing.T) {
 	}
 }
 
-// fakeImagePrune records each apply flag and answers with a preview or an
-// applied report over the same images.
+// fakeImagePrune records each apply flag and confirmed selection and
+// answers with a preview or an applied report over the same images.
 type fakeImagePrune struct {
-	applies  []bool
-	eligible []image.PruneEntry
+	applies   []bool
+	confirmed [][]string
+	eligible  []image.PruneEntry
 }
 
-func (f *fakeImagePrune) run(_ context.Context, apply bool) (image.PruneReport, error) {
+func (f *fakeImagePrune) run(_ context.Context, apply bool, confirmed []string) (image.PruneReport, error) {
 	f.applies = append(f.applies, apply)
+	f.confirmed = append(f.confirmed, confirmed)
 	report := image.PruneReport{Current: "cur", Apply: apply, Eligible: f.eligible}
 	if apply {
 		report.Deleted = f.eligible
@@ -89,6 +91,10 @@ func TestImagePruneAsksOnTerminal(t *testing.T) {
 				require.NoError(t, err)
 			}
 			require.Equal(t, tc.applies, fake.applies)
+			if len(tc.applies) == 2 {
+				// Only the images listed before the prompt may be deleted.
+				require.Equal(t, [][]string{nil, {"old"}}, fake.confirmed)
+			}
 			require.Equal(t, tc.stdout, stdout.String())
 			require.Contains(t, stderr.String(), "current  cur  (kept)\n")
 			if tc.prompted {
@@ -117,6 +123,7 @@ func TestImagePruneWithoutTerminal(t *testing.T) {
 	fake = &fakeImagePrune{eligible: old}
 	require.NoError(t, (&ImagePruneCmd{Force: true}).prune(context.Background(), fake.run, guard, noTTY, &stdout, &stderr))
 	require.Equal(t, []bool{true}, fake.applies)
+	require.Equal(t, [][]string{nil}, fake.confirmed)
 	require.Equal(t, "current  cur  (kept)\ndeleted  old\nsummary  deleted 1, failed 0, skipped 0\n", stdout.String())
 	require.Empty(t, stderr.String())
 
