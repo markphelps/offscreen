@@ -1,0 +1,47 @@
+\e[34m⠋\e[0m [1/3] Pull base image  \e[2m0.0s\e[0m
+\e[1A\e[J\e[34m⠋\e[0m [1/3] Pull base image  \e[2m0.0s\e[0m  0%
+\e[1A\e[J\e[34m⠴\e[0m [1/3] Pull base image  \e[2m0.5s\e[0m  25%
+\e[1A\e[J\e[34m⠴\e[0m [1/3] Pull base image  \e[2m0.5s\e[0m  30%
+\e[1A\e[J\e[34m⠋\e[0m [1/3] Pull base image  \e[2m1.0s\e[0m  100%
+\e[1A\e[J\e[32m✔\e[0m [1/3] Pull base image  \e[2m1.0s\e[0m
+\e[34m⠋\e[0m [2/3] Clone VM  \e[2m0.0s\e[0m
+\e[1A\e[J\e[34m⠋\e[0m [2/3] Clone VM  \e[2m0.0s\e[0m
+\e[2m    cloning\e[0m
+\e[2A\e[J\e[34m⠸\e[0m [2/3] Clone VM  \e[2m0.3s\e[0m
+\e[2m    cloning\e[0m
+\e[2m    almost there\e[0m
+\e[3A\e[J\e[32m✔\e[0m [2/3] Clone VM  \e[2m0.3s\e[0m
+\e[34m⠋\e[0m [3/3] Run setup script setup.sh  \e[2m0.0s\e[0m
+\e[1A\e[J\e[34m⠋\e[0m [3/3] Run setup script setup.sh  \e[2m0.0s\e[0m
+\e[2m    one\e[0m
+\e[2A\e[J\e[34m⠙\e[0m [3/3] Run setup script setup.sh  \e[2m0.1s\e[0m
+\e[2m    one\e[0m
+\e[2m    two\e[0m
+\e[3A\e[J\e[34m⠹\e[0m [3/3] Run setup script setup.sh  \e[2m0.2s\e[0m
+\e[2m    one\e[0m
+\e[2m    two\e[0m
+\e[2m    three\e[0m
+\e[4A\e[J\e[34m⠸\e[0m [3/3] Run setup script setup.sh  \e[2m0.3s\e[0m
+\e[2m    one\e[0m
+\e[2m    two\e[0m
+\e[2m    three\e[0m
+\e[2m    four\e[0m
+\e[5A\e[J\e[34m⠼\e[0m [3/3] Run setup script setup.sh  \e[2m0.4s\e[0m
+\e[2m    one\e[0m
+\e[2m    two\e[0m
+\e[2m    three\e[0m
+\e[2m    four\e[0m
+\e[2m    five\e[0m
+\e[6A\e[J\e[34m⠴\e[0m [3/3] Run setup script setup.sh  \e[2m0.5s\e[0m
+\e[2m    two\e[0m
+\e[2m    three\e[0m
+\e[2m    four\e[0m
+\e[2m    five\e[0m
+\e[2m    six\e[0m
+\e[6A\e[J\e[34m⠦\e[0m [3/3] Run setup script setup.sh  \e[2m0.6s\e[0m
+\e[2m    three\e[0m
+\e[2m    four\e[0m
+\e[2m    five\e[0m
+\e[2m    six\e[0m
+\e[2m    partial\e[0m
+\e[6A\e[J\e[31m✘\e[0m [3/3] Run setup script setup.sh  \e[31mERROR 0.6s\e[0m\e[31m: exit status 1\e[0m

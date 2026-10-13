@@ -1,0 +1,4 @@
+⠋ [1/1] A title long enough to b…  0.0s
+\e[1A\e[J⠋ [1/1] A title long enough to b…  0.0s
+    red    tab bell
+\e[2A\e[J- [1/1] A title long enough to be cut at forty columns  1.0s
