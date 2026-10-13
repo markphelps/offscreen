@@ -42,7 +42,7 @@ func TestRunSubmissionCapturesCallerEnvironment(t *testing.T) {
 	})}
 	go func() { _ = server.Serve(listener) }()
 	defer func() { _ = server.Close() }()
-	require.NoError(t, (&RunCmd{Project: "hello", Args: []string{"test-ui"}, Worktree: root, Detach: true}).Run())
+	require.NoError(t, (&RunCmd{Project: "hello", Args: []string{"test-ui"}, Worktree: root, Detach: true}).Run(progressSetting{}))
 	select {
 	case req := <-received:
 		require.Equal(t, "left=right", req.HostEnv["OFFSCREEN_CALLER_VALUE"])
