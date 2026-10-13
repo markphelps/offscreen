@@ -6,6 +6,8 @@ builds:
   - id: offscreen
     main: ./cmd/offscreen
     binary: offscreen
+    ldflags:
+      - -s -w -X github.com/markphelps/offscreen/internal/version.Build={{ .Version }}
     env:
       - CGO_ENABLED=0
     goos: [darwin]
@@ -13,6 +15,8 @@ builds:
   - id: offscreend
     main: ./cmd/offscreend
     binary: offscreend
+    ldflags:
+      - -s -w -X github.com/markphelps/offscreen/internal/version.Build={{ .Version }}
     env:
       - CGO_ENABLED=0
     goos: [darwin]

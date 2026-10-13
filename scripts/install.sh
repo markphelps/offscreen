@@ -8,6 +8,9 @@ set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 bin=${OFFSCREEN_BIN_DIR:-$HOME/.local/bin}
 mode=${1:-install}
+# Diagnostics only (offscreen version); compatibility uses the protocol number.
+version=$(git -C "$root" describe --tags --always --dirty 2>/dev/null || echo dev)
+ldflags="-X github.com/markphelps/offscreen/internal/version.Build=$version"
 
 # Only touch an `ofs` that is missing or is our own symlink.
 owns_alias() {
@@ -18,7 +21,7 @@ owns_alias() {
 case "$mode" in
 install)
   mkdir -p "$bin"
-  (cd "$root" && go build -o "$bin/offscreen" ./cmd/offscreen && go build -o "$bin/offscreend" ./cmd/offscreend)
+  (cd "$root" && go build -ldflags "$ldflags" -o "$bin/offscreen" ./cmd/offscreen && go build -ldflags "$ldflags" -o "$bin/offscreend" ./cmd/offscreend)
   "$bin/offscreen" daemon install
   if owns_alias; then
     ln -sf offscreen "$bin/ofs"

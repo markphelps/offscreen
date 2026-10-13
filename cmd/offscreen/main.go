@@ -38,6 +38,7 @@ type CLI struct {
 	Resume    ResumeCmd    `cmd:"" help:"Resume the host lane."`
 	Image     ImageCmd     `cmd:"" help:"Manage the golden image."`
 	Daemon    DaemonCmd    `cmd:"" help:"Manage the background daemon."`
+	Version   VersionCmd   `cmd:"" help:"Print the client and daemon versions and protocols."`
 }
 type RunCmd struct {
 	Lane     string        `help:"Execution lane." enum:"vm,host,auto" default:"auto"`
@@ -66,6 +67,7 @@ func (c *RunCmd) Run(setting progressSetting) (runErr error) {
 	if err != nil {
 		return err
 	}
+	warnOldDaemon(context.Background(), client, os.Stderr)
 	var display *phaseDisplay
 	if !c.Detach {
 		if display, err = newPhaseDisplay(setting, os.Stderr, progress.Options{}); err != nil {
@@ -331,6 +333,9 @@ func main() {
 		}
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		if errors.Is(err, daemon.ErrUnavailable) {
+			os.Exit(exitcode.RunnerFailure)
+		}
+		if _, ok := errors.AsType[daemon.IncompatibleError](err); ok {
 			os.Exit(exitcode.RunnerFailure)
 		}
 		if _, ok := errors.AsType[runFailure](err); ok {

@@ -59,8 +59,7 @@ func TestStreamWithoutPhasesParamSendsOnlyOutput(t *testing.T) {
 	// Response headers arrive with the first frame, so release the job
 	// while the request is waiting.
 	time.AfterFunc(100*time.Millisecond, func() { close(release) })
-	raw, err := client.call(context.Background(), "GET", "/jobs/"+job.ID+"/stream", nil)
-	require.NoError(t, err)
+	raw := legacyGet(t, client, "/jobs/"+job.ID+"/stream")
 	defer func() { _ = raw.Body.Close() }()
 	require.Equal(t, []byte{FrameStdout, FrameStderr, FrameStdout}, readFrames(t, raw.Body))
 
