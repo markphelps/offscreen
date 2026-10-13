@@ -57,7 +57,7 @@ Every task gets `OFFSCREEN_OUT` (write screenshots and test results here), `OFFS
 
 ## User config
 
-The file is optional; missing settings use the defaults below. `OFFSCREEN_CONFIG` overrides its path for the client and daemon (set it before `offscreen daemon install` to carry it into launchd). The daemon reads its settings at startup; reinstall/restart it to pick up changes. `OFFSCREEN_STATE_DIR` overrides state/socket and job/cache directories (use a short, owner-only path to fit Unix socket length limits).
+The file is optional; missing settings use the defaults below. `OFFSCREEN_CONFIG` overrides its path for the client and daemon (set it before `offscreen daemon install` to carry it into launchd). The daemon reads its settings at startup; reinstall/restart it to pick up changes. The exception is `current_image`, which it rereads for each VM job, so a new `offscreen image build` takes effect without a restart. `OFFSCREEN_STATE_DIR` overrides state/socket and job/cache directories (use a short, owner-only path to fit Unix socket length limits).
 
 ```toml
 # ~/Library/Application Support/offscreen/config.toml
@@ -92,4 +92,4 @@ ssh_password = "admin"
 | `[image] ssh_key` | Empty | SSH private key path for a base image set up for key login; use instead of password if supported by your VM. |
 | `[image] setup` | Empty list | Paths to **host-side script files** (supports `~/`) streamed to and executed in the guest once while building the golden image. Use for machine-wide tools, not a project's per-job setup. |
 
-For example, if a guest needs Homebrew or mise, supply a local image setup script that installs it and add that script's path to `[image] setup`. It runs inside the guest during `offscreen image build`, not on your host. The initial image build checks guest auto-login and GUI automation, selects the display mode, and records the resulting stopped image. It does not alter a project's `.offscreen.toml`.
+For example, if a guest needs Homebrew or mise, supply a local image setup script that installs it and add that script's path to `[image] setup`. It runs inside the guest during `offscreen image build`, not on your host. The initial image build checks guest auto-login and GUI automation, selects the display mode, then (after any setup scripts) quits open apps and turns off app relaunch and window restoration, and records the resulting stopped image. It does not alter a project's `.offscreen.toml`.

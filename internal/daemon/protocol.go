@@ -21,6 +21,7 @@ type Request struct {
 	Lane    project.Lane      `json:"lane"`
 	Timeout time.Duration     `json:"timeout"`
 	Keep    bool              `json:"keep"`
+	Show    bool              `json:"show,omitempty"` // VM lane only: open the VM window on the host.
 	TTY     bool              `json:"tty"`
 	Detach  bool              `json:"detach"`
 }

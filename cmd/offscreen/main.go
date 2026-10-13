@@ -42,6 +42,7 @@ type RunCmd struct {
 	Lane     string        `help:"Execution lane." enum:"vm,host,auto" default:"auto"`
 	Timeout  time.Duration `help:"Maximum time waiting or running." default:"0s"`
 	Keep     bool          `help:"Keep the VM after a failed job."`
+	Show     bool          `help:"Show the VM in a window on your desktop instead of running headless (VM lane only)."`
 	Worktree string        `help:"Path to a git worktree." type:"path"`
 	Detach   bool          `help:"Print the job ID without waiting."`
 	Project  string        `arg:"" name:"project"`
@@ -64,7 +65,7 @@ func (c *RunCmd) Run() (runErr error) {
 	if err != nil {
 		return err
 	}
-	req := daemon.Request{Root: contract.Root, Project: c.Project, Lane: project.Lane(c.Lane), Timeout: c.Timeout, Keep: c.Keep, Detach: c.Detach, HostEnv: hostEnvironment(os.Environ())}
+	req := daemon.Request{Root: contract.Root, Project: c.Project, Lane: project.Lane(c.Lane), Timeout: c.Timeout, Keep: c.Keep, Show: c.Show, Detach: c.Detach, HostEnv: hostEnvironment(os.Environ())}
 	if c.Direct {
 		req.Argv = c.Args
 	} else {

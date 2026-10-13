@@ -50,6 +50,7 @@ type Options struct {
 	Lane           project.Lane
 	Timeout        time.Duration
 	Keep           bool
+	Show           bool // Open the VM's window on the host instead of running headless.
 	Stdin          io.Reader
 	Stdout, Stderr io.Writer
 	TTY            bool
@@ -187,7 +188,7 @@ func Execute(ctx context.Context, o Options) (result Result) {
 		}
 	}()
 	shares := []string{"worktree:" + spec.Root + ":ro", "artifacts:" + result.Artifacts, "cache:" + cache}
-	vm, err = client.StartShared(bootCtx, result.VM, shares)
+	vm, err = client.StartShared(bootCtx, result.VM, shares, o.Show)
 	if err != nil {
 		fail(err)
 		return

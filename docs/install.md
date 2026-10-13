@@ -34,7 +34,7 @@ Rerun the install after pulling changes. The daemon must be reinstalled whenever
 offscreen image build
 ```
 
-This pulls the base image if needed, checks guest auto-login and GUI automation, and records the resulting image in your user config. `offscreen image refresh` pulls the base image again before rebuilding. See [the config reference](config.md#user-config) to change the base image or add image setup scripts.
+This pulls the base image if needed, checks guest auto-login and GUI automation, turns off app relaunch and window restoration so every job starts on an empty desktop, and records the resulting image in your user config. `offscreen image refresh` pulls the base image again before rebuilding. See [the config reference](config.md#user-config) to change the base image or add image setup scripts.
 
 ## Install the daemon
 

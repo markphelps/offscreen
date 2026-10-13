@@ -21,7 +21,7 @@ func TestExpandHome(t *testing.T) {
 }
 
 func TestEmbeddedScriptsExist(t *testing.T) {
-	for _, path := range []string{"scripts/check.sh", "scripts/automation.sh", "scripts/setup.sh", "scripts/display.sh"} {
+	for _, path := range []string{"scripts/check.sh", "scripts/automation.sh", "scripts/setup.sh", "scripts/display.sh", "scripts/desktop.sh"} {
 		contents, err := scripts.ReadFile(path)
 		require.NoError(t, err)
 		require.Contains(t, string(contents), "set -euo pipefail")

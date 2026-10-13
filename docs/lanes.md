@@ -4,7 +4,7 @@ Every job runs in one of two lanes. The **VM lane** is the default and never tou
 
 ## VM lane
 
-The VM lane clones the current golden image for each job, copies the worktree and selected prepared files to the guest, and collects `$OFFSCREEN_OUT`. It runs headless and needs no host helper.
+The VM lane clones the current golden image for each job, copies the worktree and selected prepared files to the guest, and collects `$OFFSCREEN_OUT`. It runs headless and needs no host helper. `offscreen run --show` opens a job's VM in a Tart window instead, for when you want to watch it.
 
 By default, up to two VM jobs can run at once, reduced to one when memory is low. Apple's macOS virtualization license limits a host to **two macOS guests**; do not raise `vm_slots` beyond that. Use `exclusive = true` in a project contract to serialize its jobs.
 

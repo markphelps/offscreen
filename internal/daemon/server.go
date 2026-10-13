@@ -392,6 +392,9 @@ func (s *Server) submit(req Request) (Job, error) {
 	if req.Timeout < 0 {
 		return Job{}, fmt.Errorf("timeout must be nonnegative")
 	}
+	if req.Show && spec.Lane != project.LaneVM {
+		return Job{}, fmt.Errorf("--show applies only to VM jobs")
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return Job{}, err
 	}
@@ -753,6 +756,14 @@ func (s *Server) execute(ctx context.Context, w *worker, req Request) {
 		input = w.inputR
 	}
 	cfg := s.cfg
+	if w.job.Lane == project.LaneVM {
+		// image build records current_image while the daemon runs; read it per job.
+		if fresh, err := config.Load(); err != nil {
+			slog.Warn("reload current image; using the startup value", "err", err)
+		} else if fresh.CurrentImage != "" {
+			cfg.CurrentImage = fresh.CurrentImage
+		}
+	}
 	phase := func(state string) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -763,7 +774,7 @@ func (s *Server) execute(ctx context.Context, w *worker, req Request) {
 	var result run.Result
 	switch {
 	case w.job.Lane == project.LaneVM:
-		result = s.executor(ctx, run.Options{ID: w.job.ID, Artifacts: w.job.Artifacts, SkipLock: true, Config: cfg, Contract: w.contract, Task: req.Task, Argv: req.Argv, Lane: w.job.Lane, HostEnv: req.HostEnv, Keep: req.Keep, Stdin: input, Stdout: streamWriter{w, 'o'}, Stderr: streamWriter{w, 'e'}, TTY: req.TTY, Phase: phase})
+		result = s.executor(ctx, run.Options{ID: w.job.ID, Artifacts: w.job.Artifacts, SkipLock: true, Config: cfg, Contract: w.contract, Task: req.Task, Argv: req.Argv, Lane: w.job.Lane, HostEnv: req.HostEnv, Keep: req.Keep, Show: req.Show, Stdin: input, Stdout: streamWriter{w, 'o'}, Stderr: streamWriter{w, 'e'}, TTY: req.TTY, Phase: phase})
 	case s.hostExecute != nil:
 		result = s.hostExecute(ctx, run.Options{ID: w.job.ID, Artifacts: w.job.Artifacts, Config: cfg, Contract: w.contract, Task: req.Task, Argv: req.Argv, Lane: w.job.Lane, HostEnv: req.HostEnv, Stdin: input, Stdout: streamWriter{w, 'o'}, Stderr: streamWriter{w, 'e'}, TTY: req.TTY, Phase: phase})
 	default:

@@ -24,6 +24,7 @@ Run from a directory under a repo containing `.offscreen.toml`, or pass `--workt
 | `--worktree /path/to/worktree` | Use the contract in this exact directory. |
 | `--detach` | Print the job ID and return; stdin is closed. |
 | `--keep` | Retain a failed VM clone for inspection. |
+| `--show` | Open the VM in a Tart window on your desktop so you can watch the job. VM lane only; the default is headless. The window may take focus. |
 
 A kept clone **holds its VM slot and any exclusive-project lease** until `offscreen cancel <job>` deletes it.
 

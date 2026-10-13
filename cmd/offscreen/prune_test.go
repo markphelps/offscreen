@@ -50,6 +50,7 @@ func TestPrunePreviewAndApplyAgainstIsolatedDaemon(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = os.RemoveAll(state) }()
 	t.Setenv("OFFSCREEN_STATE_DIR", state)
+	t.Setenv("OFFSCREEN_CONFIG", filepath.Join(state, "config.toml")) // no image, never the user's config
 	bin := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "tart"), []byte("#!/bin/sh\nif [ \"$1\" = list ]; then printf '[]\\n'; fi\n"), 0o700)) // #nosec G306 -- test executable
 	t.Setenv("PATH", bin+":/usr/bin:/bin")
