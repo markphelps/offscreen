@@ -106,7 +106,7 @@ func (d *phaseDisplay) finish(w io.Writer) {
 		return
 	}
 	for _, line := range d.tail {
-		_, _ = io.WriteString(w, line+"\n")
+		_, _ = io.WriteString(w, progress.Sanitize(line)+"\n")
 	}
 	d.tail = nil
 }

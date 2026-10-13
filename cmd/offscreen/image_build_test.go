@@ -34,6 +34,7 @@ func fakeBuild(fail bool) imageBuilder {
 				tail = append(tail, fmt.Sprintf("setup line %d", i))
 			}
 		}
+		tail[len(tail)-1] = "setup line 100\x1b[2J"
 		err := errors.New(`image setup script "~/setup.sh": guest command: Process exited with status 1`)
 		step.Fail(err)
 		return "", &image.StepError{Step: "Run setup script ~/setup.sh", Tail: tail, Log: "/state/image-builds/offscreen-build-abc.log", Err: err}
@@ -61,7 +62,7 @@ func TestRunBuildFailureShowsTailAndLogPath(t *testing.T) {
 	require.Equal(t, `image setup script "~/setup.sh": guest command: Process exited with status 1`+"\nfull build log: /state/image-builds/offscreen-build-abc.log", err.Error())
 	out := stderr.String()
 	require.True(t, strings.HasPrefix(out, "> Run setup script ~/setup.sh (last 20 lines of output):\n  setup line 81\n"), out)
-	require.True(t, strings.HasSuffix(out, "  setup line 100\n"), out)
+	require.True(t, strings.HasSuffix(out, "  setup line 100\n"), out) // escape stripped
 	require.NotContains(t, out, "setup line 80\n")
 }
 

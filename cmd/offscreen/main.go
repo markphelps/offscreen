@@ -280,7 +280,7 @@ func runBuild(ctx context.Context, path string, refresh bool, setting progressSe
 		if len(stepErr.Tail) > 0 {
 			_, _ = fmt.Fprintf(stderr, "> %s (last %d lines of output):\n", stepErr.Step, len(stepErr.Tail))
 			for _, line := range stepErr.Tail {
-				_, _ = fmt.Fprintf(stderr, "  %s\n", line)
+				_, _ = fmt.Fprintf(stderr, "  %s\n", progress.Sanitize(line))
 			}
 		}
 		return hintError{err: err, hint: "full build log: " + stepErr.Log}

@@ -135,6 +135,21 @@ booting DONE 1.0s
 `, buf.String())
 }
 
+func TestPlainStripsEscapeSequences(t *testing.T) {
+	c := newClock()
+	var buf bytes.Buffer
+	r := New(&buf, Plain, testOptions(c, true, nil))
+	Phase(r, "queued", "waiting\x1b[2J")
+	step := NewSteps(r, 1).Start("Run \x1b]0;title\x07setup")
+	step.Line("\x1b[31mred\x1b[0m done\x07")
+	step.Fail(errors.New("exit\x1b[1A 1"))
+	require.NoError(t, r.Close())
+	assert.NotContains(t, buf.String(), "\x1b")
+	assert.NotContains(t, buf.String(), "\x07")
+	assert.Contains(t, buf.String(), "[1/1] red done\n")
+	assert.Contains(t, buf.String(), ": exit 1\n")
+}
+
 func TestUnknownStepTotal(t *testing.T) {
 	c := newClock()
 	var buf bytes.Buffer
@@ -230,6 +245,30 @@ func TestTTYGolden(t *testing.T) {
 			assert.Equal(t, string(want), got)
 		})
 	}
+}
+
+func TestTTYCountsWideCharactersAsTwoCells(t *testing.T) {
+	assert.Equal(t, 2, displayWidth("🍺"))
+	assert.Equal(t, 4, displayWidth("漢字"))
+	assert.Equal(t, 1, displayWidth("e\u0301")) // e + combining acute
+	assert.Equal(t, 2, displayWidth("❤\ufe0f"))
+	line := truncate(strings.Repeat("🍺", 30), 39)
+	assert.LessOrEqual(t, displayWidth(line), 39)
+	assert.True(t, strings.HasSuffix(line, "…"), line)
+
+	c := newClock()
+	var buf bytes.Buffer
+	r := New(&buf, TTY, testOptions(c, true, map[string]string{"NO_COLOR": "1"}))
+	step := NewSteps(r, 1).Start("Build")
+	step.Line("🍺 " + strings.Repeat("漢", 30)) // 32 runes but 63 cells: must be cut
+	drawn := buf.String()
+	assert.Contains(t, drawn, "…")
+	assert.NotContains(t, drawn, strings.Repeat("漢", 30))
+	buf.Reset()
+	step.Line("y")
+	// The title line and one cut output line, each on one row: erase 2.
+	assert.True(t, strings.HasPrefix(buf.String(), "\x1b[2A\r\x1b[J"), "%q", buf.String())
+	require.NoError(t, r.Close())
 }
 
 func TestTTYRedrawsAfterShrink(t *testing.T) {

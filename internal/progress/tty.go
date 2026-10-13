@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -90,13 +91,13 @@ func (r *ttyRenderer) Emit(e Event) {
 	at := eventTime(e, r.now)
 	switch e.Kind {
 	case KindStepStart:
-		r.live = append(r.live, &liveItem{step: e.Step, title: label(e.Step, e.Total) + " " + e.Title, start: at, pct: -1})
+		r.live = append(r.live, &liveItem{step: e.Step, title: label(e.Step, e.Total) + " " + Sanitize(e.Title), start: at, pct: -1})
 	case KindOutput:
 		item := r.find(e.Step)
 		if item == nil {
 			return
 		}
-		item.tail = append(item.tail, sanitize(e.Line))
+		item.tail = append(item.tail, Sanitize(e.Line))
 		if len(item.tail) > tailLines {
 			item.tail = item.tail[len(item.tail)-tailLines:]
 		}
@@ -120,7 +121,7 @@ func (r *ttyRenderer) Emit(e Event) {
 		if item := r.find(0); item != nil {
 			r.finish(item, at, nil, false)
 		}
-		r.live = append(r.live, &liveItem{title: phaseTitle(e.Phase, e.Reason), start: at, pct: -1})
+		r.live = append(r.live, &liveItem{title: Sanitize(phaseTitle(e.Phase, e.Reason)), start: at, pct: -1})
 	}
 	r.redraw()
 }
@@ -145,7 +146,7 @@ func (r *ttyRenderer) finish(item *liveItem, at time.Time, err error, failed boo
 	if failed {
 		line := r.paint(ansiRed, "✘") + " " + item.title + "  " + r.paint(ansiRed, "ERROR "+elapsed)
 		if err != nil {
-			line += r.paint(ansiRed, ": "+sanitize(err.Error()))
+			line += r.paint(ansiRed, ": "+Sanitize(err.Error()))
 		}
 		r.finished = append(r.finished, line)
 		return
@@ -240,9 +241,9 @@ func (r *ttyRenderer) paint(code, s string) string {
 	return code + s + ansiReset
 }
 
-// sanitize removes escape sequences and control characters from s so that
+// Sanitize removes escape sequences and control characters from s so that
 // command output cannot move the cursor or break the layout.
-func sanitize(s string) string {
+func Sanitize(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {
 		c := s[i]
@@ -305,13 +306,13 @@ func truncate(s string, width int) string {
 			i = end
 			continue
 		}
-		if visible == width-1 {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if visible+cellWidth(r) > width-1 {
 			b.WriteString("…")
 			break
 		}
-		_, size := utf8.DecodeRuneInString(s[i:])
 		b.WriteString(s[i : i+size])
-		visible++
+		visible += cellWidth(r)
 		i += size
 	}
 	if colored {
@@ -320,7 +321,7 @@ func truncate(s string, width int) string {
 	return b.String()
 }
 
-// displayWidth counts the runes of s outside escape sequences.
+// displayWidth counts the terminal cells s takes outside escape sequences.
 func displayWidth(s string) int {
 	n := 0
 	for i := 0; i < len(s); {
@@ -328,9 +329,34 @@ func displayWidth(s string) int {
 			i = skipEscape(s, i) + 1
 			continue
 		}
-		_, size := utf8.DecodeRuneInString(s[i:])
-		n++
+		r, size := utf8.DecodeRuneInString(s[i:])
+		n += cellWidth(r)
 		i += size
 	}
 	return n
+}
+
+// cellWidth returns how many terminal cells r takes: 0 for combining marks
+// and zero-width characters, 2 for East Asian wide characters and emoji, 1
+// otherwise. When unsure it errs wide: a line cut a cell early is harmless,
+// but a line that wraps unexpectedly breaks the in-place redraw.
+func cellWidth(r rune) int {
+	switch {
+	case unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf),
+		r >= 0xfe00 && r <= 0xfe0f: // variation selectors
+		return 0
+	case r >= 0x1100 && r <= 0x115f, // Hangul Jamo
+		r >= 0x231a && r <= 0x23ff,                             // watch, hourglass, media symbols
+		r >= 0x2600 && r <= 0x27bf,                             // miscellaneous symbols and dingbats
+		r >= 0x2b00 && r <= 0x2bff,                             // arrows and stars often drawn as emoji
+		r >= 0x2e80 && r <= 0xa4cf && r != 0x303f,              // CJK
+		r >= 0xac00 && r <= 0xd7a3,                             // Hangul syllables
+		r >= 0xf900 && r <= 0xfaff,                             // CJK compatibility ideographs
+		r >= 0xfe30 && r <= 0xfe4f,                             // CJK compatibility forms
+		r >= 0xff00 && r <= 0xff60, r >= 0xffe0 && r <= 0xffe6, // fullwidth forms
+		r >= 0x1f000 && r <= 0x1faff, // emoji and pictographs
+		r >= 0x20000 && r <= 0x3fffd: // CJK extensions
+		return 2
+	}
+	return 1
 }
