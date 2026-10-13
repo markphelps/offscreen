@@ -164,6 +164,14 @@ func Build(ctx context.Context, path string, refresh bool) (string, error) {
 			return "", fmt.Errorf("image setup script %q: %w", path, runErr)
 		}
 	}
+	// Last, so apps opened by setup scripts are closed too.
+	desktop, err := scripts.ReadFile("scripts/desktop.sh")
+	if err != nil {
+		return "", err
+	}
+	if _, err := guest.Run(sshClient, "/bin/bash -e -s", strings.NewReader(string(desktop))); err != nil {
+		return "", fmt.Errorf("disable app relaunch and window restoration: %w", err)
+	}
 	versionOutput, err := guest.Run(sshClient, "xcodebuild -version", nil)
 	if err != nil {
 		return "", fmt.Errorf("read guest Xcode version: %w", err)

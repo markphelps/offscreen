@@ -56,7 +56,7 @@ func TestRunCommandParsesTaskAndFlags(t *testing.T) {
 	var cli CLI
 	parser, err := kong.New(&cli)
 	require.NoError(t, err)
-	ctx, err := parser.Parse([]string{"run", "sample", "--lane", "host", "--timeout", "10s", "--keep", "--worktree", "/tmp", "--detach", "test-ui"})
+	ctx, err := parser.Parse([]string{"run", "sample", "--lane", "host", "--timeout", "10s", "--keep", "--show", "--worktree", "/tmp", "--detach", "test-ui"})
 	require.NoError(t, err)
 	require.Equal(t, "run <project> <task-or-command>", ctx.Command())
 	require.Equal(t, "sample", cli.Run.Project)
@@ -64,6 +64,7 @@ func TestRunCommandParsesTaskAndFlags(t *testing.T) {
 	require.Equal(t, "host", cli.Run.Lane)
 	require.Equal(t, 10*time.Second, cli.Run.Timeout)
 	require.True(t, cli.Run.Keep)
+	require.True(t, cli.Run.Show)
 	require.Equal(t, "/tmp", cli.Run.Worktree)
 	require.True(t, cli.Run.Detach)
 }

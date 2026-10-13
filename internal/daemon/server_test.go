@@ -27,6 +27,7 @@ func fixture(t *testing.T, executor func(context.Context, run.Options) run.Resul
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(state) })
 	t.Setenv("OFFSCREEN_STATE_DIR", state)
+	t.Setenv("OFFSCREEN_CONFIG", filepath.Join(state, "config.toml")) // never the user's config
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".offscreen.toml"), []byte("project = 'hello'\n"), 0o600))
 	binary := filepath.Join(t.TempDir(), "tart")

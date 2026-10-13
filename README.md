@@ -79,7 +79,7 @@ offscreen run myapp -- swift test   # or any one-off command
 | `offscreen artifacts <job>` | Print a job's artifact directory. |
 | `offscreen cancel <job>` | Cancel a job and wait for cleanup. |
 
-Useful `run` flags: `--detach` returns right away, `--keep` keeps a failed VM for inspection, and `--timeout` limits how long a job can wait and run. See the [command reference](docs/cli.md) for all commands, flags, and exit codes.
+Useful `run` flags: `--detach` returns right away, `--keep` keeps a failed VM for inspection, `--show` opens the VM in a window so you can watch it, and `--timeout` limits how long a job can wait and run. See the [command reference](docs/cli.md) for all commands, flags, and exit codes.
 
 ## Jobs that need real hardware
 
