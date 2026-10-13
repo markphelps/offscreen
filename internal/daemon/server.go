@@ -1184,9 +1184,15 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		}
 		// Without phases, read to EOF. With phases, stop at the size the
 		// phases were recorded against; later frames wait for the next scan.
+		// A complete job records no more phases, so read it to EOF: a job
+		// loaded after a restart has neither phases nor a written size.
 		limit := int64(-1)
 		if phases {
-			pending, limit = job.phasesSince(nextPhase)
+			var recorded int64
+			pending, recorded = job.phasesSince(nextPhase)
+			if !complete {
+				limit = recorded
+			}
 		}
 		f, err := os.Open(path)
 		if err == nil {

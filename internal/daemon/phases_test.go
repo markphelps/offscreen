@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/markphelps/offscreen/internal/config"
 	"github.com/markphelps/offscreen/internal/run"
 )
 
@@ -172,4 +173,27 @@ func TestQueuedPhaseCarriesAdmissionReason(t *testing.T) {
 	require.NotEmpty(t, seen)
 	require.Equal(t, "queued", seen[0].State)
 	require.Equal(t, "waiting for VM slot", seen[0].Reason)
+}
+
+// A job finished before a daemon restart has no in-memory phases or
+// stream.bin size; asking for phases must still return all its output.
+func TestStreamPhasesReturnsOutputOfJobFromBeforeRestart(t *testing.T) {
+	release := make(chan struct{})
+	close(release)
+	s, client, root := fixture(t, phasedExecutor(release), func() (uint64, error) { return 20 << 30, nil })
+	job := submitFixture(t, client, root, Request{Detach: true})
+	waitState(t, client, job.ID, "done")
+	require.NoError(t, s.Close())
+
+	restored, err := open(config.Default(), phasedExecutor(release), s.tart, func() (uint64, error) { return 20 << 30, nil })
+	require.NoError(t, err)
+	client = serveFixture(t, restored)
+	var stdout, stderr bytes.Buffer
+	var phases int
+	finished, err := client.StreamPhases(context.Background(), job.ID, &stdout, &stderr, func(Phase) { phases++ })
+	require.NoError(t, err)
+	require.Equal(t, "done", finished.State)
+	require.Equal(t, "a\nhi\n", stdout.String())
+	require.Equal(t, "b\n", stderr.String())
+	require.Zero(t, phases)
 }
