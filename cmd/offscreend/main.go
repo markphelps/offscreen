@@ -11,6 +11,7 @@ import (
 	"github.com/markphelps/offscreen/internal/daemon"
 	"github.com/markphelps/offscreen/internal/logging"
 	"github.com/markphelps/offscreen/internal/run"
+	"github.com/markphelps/offscreen/internal/version"
 )
 
 func serve() error {
@@ -23,6 +24,7 @@ func serve() error {
 		return err
 	}
 	slog.SetDefault(logger)
+	slog.Info("offscreend starting", "version", version.Build, "protocol", daemon.ProtocolVersion)
 	cfg, err := config.Load()
 	if err != nil {
 		return err

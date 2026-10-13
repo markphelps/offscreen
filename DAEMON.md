@@ -75,6 +75,22 @@ What happens to a job that was in flight when the daemon stopped:
 
 A `job-*` clone counts as owned only if it matches a recorded job, or its 16-hex-digit ID has a job directory. Other tools' `job-*` VMs are left alone.
 
+## Versions and upgrades
+
+`offscreen` and `offscreend` are separate binaries and upgrade separately. Rebuilding or reinstalling the CLI does not restart the running daemon; only `offscreen daemon install` (which `mise run install:go` runs) does. So a new client can talk to an older daemon, and an older client to a new one.
+
+The socket API has an integer protocol version, `daemon.ProtocolVersion`. It goes up whenever the API gains or changes behavior. A daemon from before version negotiation is protocol 0. `GET /version` returns the daemon's protocol, its build version, and the opt-in features it supports, such as `phases`. A protocol 0 daemon answers 404, which the client reads as protocol 0 with no features. The build version (set at build time; `dev` for a plain `go build`) is for diagnostics only. Compatibility is decided by the protocol number and features, never by the build string.
+
+The compatibility rules:
+
+- **The daemon keeps serving older clients.** New behavior is opt-in per request, as `?phases=1` is on the job stream, so a client that does not ask gets the old behavior. The menu bar helper sends no protocol and keeps working.
+- **The client checks the daemon once per command.** It asks `GET /version`, caches the answer, and uses a feature only when the daemon advertises it. Against a protocol 0 daemon, `run` shows no phases and passes the job's stderr through untouched.
+- **Every client request carries `X-Offscreen-Protocol`.** The daemon logs requests whose protocol differs from its own at debug level (`OFFSCREEN_LOG_LEVEL=debug`); requests without the header (older clients and the helper) are served as before.
+- **A daemon too old to use is refused by the client.** If the daemon's protocol is below the client's minimum, every command that talks to it fails with one line plus a hint to run `offscreen daemon install`, and exits 70. The current minimum is 0, so every daemon is usable.
+- **An older but usable daemon gets a warning.** `status` and `run` print one `warning:` line on stderr suggesting a restart. Stdout is unchanged.
+
+Run `offscreen version` to see both sides. After upgrading, run `offscreen daemon install` (or `mise run install:go`) to restart the daemon with the new build. The daemon logs its build version and protocol when it starts.
+
 ## Caller environment
 
 ```mermaid

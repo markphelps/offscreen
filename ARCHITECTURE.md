@@ -65,7 +65,7 @@ sequenceDiagram
     D-->>C: exit code + artifact dir
 ```
 
-The job stream is a sequence of frames: a kind byte, a big-endian 4-byte length, and the payload. `stream.bin` holds only stdout (`o`) and stderr (`e`) frames, which is all `offscreen logs` replays. A stream request with `?phases=1` also gets phase frames (`p`, a JSON state, reason and time) for each non-terminal state change, in order with the output. The daemon keeps recent phases in memory only and sends them only on request, so a client from before phase frames, which rejects unknown kinds, never sees one. A new client against an older daemon gets output only.
+The job stream is a sequence of frames: a kind byte, a big-endian 4-byte length, and the payload. `stream.bin` holds only stdout (`o`) and stderr (`e`) frames, which is all `offscreen logs` replays. A stream request with `?phases=1` also gets phase frames (`p`, a JSON state, reason and time) for each non-terminal state change, in order with the output. The daemon keeps recent phases in memory only and sends them only on request, so a client from before phase frames, which rejects unknown kinds, never sees one. A client asks for phases only when `GET /version` lists the `phases` feature; a daemon from before version negotiation answers 404 there, so the client streams output only. Every client request carries its protocol in `X-Offscreen-Protocol`; see [versions and upgrades](DAEMON.md#versions-and-upgrades).
 
 The host lane follows the same flow without Tart. The task runs in the real checkout under a guardian process, and `[guest] setup` is skipped. Admission waits for fresh helper observations: idle long enough, unlocked and awake, camera and mic off, and not paused. A ten-second countdown comes first.
 

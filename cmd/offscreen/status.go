@@ -44,11 +44,18 @@ func (c *StatusCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	jobs, err := client.Jobs(context.Background())
+	return c.run(context.Background(), client, os.Stdout, os.Stderr)
+}
+
+// run lists the daemon's jobs on stdout, after warning on stderr if the
+// daemon is older than this client.
+func (c *StatusCmd) run(ctx context.Context, client daemon.Client, stdout, stderr io.Writer) error {
+	warnOldDaemon(ctx, client, stderr)
+	jobs, err := client.Jobs(ctx)
 	if err != nil {
 		return err
 	}
-	return c.print(os.Stdout, jobs, time.Now())
+	return c.print(stdout, jobs, time.Now())
 }
 
 // print lists queued and active jobs, or every job with All, newest first.
