@@ -25,7 +25,7 @@ Run from a directory under a repo containing `.offscreen.toml`, or pass `--workt
 | Flag | Meaning |
 | --- | --- |
 | `-q`, `--quiet` | Print only job IDs (`status`) or image names (`image ls`), one per line. Overrides `--format`. |
-| `--format table` | The default table. |
+| `--format table` | The default table. A cell shows only the first line of a multi-line value, such as a failed job's reason, ending in `…`; templates and JSON get the whole value. |
 | `--format json` | One JSON object per row, one per line. Field names may change before 1.0. |
 | `--format '<template>'` | A Go [text/template](https://pkg.go.dev/text/template) applied to each row, for example `'{{.ID}} {{.State}}'`. |
 | `--format 'table <template>'` | A table with headers built from the template, for example `'table {{.ID}}\t{{.State}}'`. `\t` and `\n` are expanded. |

@@ -52,6 +52,20 @@ func TestStatusAllIncludesCompletedJobs(t *testing.T) {
 	require.True(t, strings.HasPrefix(lines[3], "aaaa000000000001   hello            test-ui   vm     done      3 hours ago"), lines[3])
 }
 
+func TestStatusTableShowsFirstLineOfMultilineReasons(t *testing.T) {
+	jobs := []daemon.Job{{ID: "aaaa000000000009", Project: "hello", Lane: project.LaneVM, State: "failed", Created: listNow.Add(-time.Minute), Reason: "tart clone failed\nline two\tmore\nline three"}}
+	var table, tmpl bytes.Buffer
+	require.NoError(t, (&StatusCmd{All: true}).print(&table, jobs, listNow))
+	lines := strings.Split(strings.TrimSuffix(table.String(), "\n"), "\n")
+	require.Len(t, lines, 2)
+	require.True(t, strings.HasSuffix(lines[1], "   tart clone failed …"), lines[1])
+	require.Equal(t, strings.Index(lines[0], "REASON"), strings.Index(lines[1], "tart clone"))
+
+	// Templates and JSON keep the whole reason.
+	require.NoError(t, (&StatusCmd{All: true, Format: "{{.Reason}}"}).print(&tmpl, jobs, listNow))
+	require.Equal(t, "tart clone failed\nline two\tmore\nline three\n", tmpl.String())
+}
+
 func TestStatusQuietPrintsOnlyIDs(t *testing.T) {
 	require.Equal(t, "aaaa000000000003\naaaa000000000002\n", printStatus(t, "-q"))
 	require.Equal(t, "aaaa000000000003\naaaa000000000002\naaaa000000000001\n", printStatus(t, "--all", "--quiet", "--format", "json"))
