@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -14,7 +13,6 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
-	"golang.org/x/sys/unix"
 
 	"github.com/markphelps/offscreen/internal/config"
 	"github.com/markphelps/offscreen/internal/daemon"
@@ -32,7 +30,7 @@ type CLI struct {
 	Logs      LogsCmd      `cmd:"" help:"Print or follow job output."`
 	Artifacts ArtifactsCmd `cmd:"" help:"Print a job's artifact directory."`
 	Cancel    CancelCmd    `cmd:"" help:"Cancel a job."`
-	Prune     PruneCmd     `cmd:"" help:"Preview or delete old completed jobs and their output."`
+	Prune     PruneCmd     `cmd:"" help:"Delete old completed jobs and their output, asking first; -f skips the prompt."`
 	Pause     PauseCmd     `cmd:"" help:"Pause the host lane."`
 	Resume    ResumeCmd    `cmd:"" help:"Resume the host lane."`
 	Image     ImageCmd     `cmd:"" help:"Manage the golden image."`
@@ -71,8 +69,7 @@ func (c *RunCmd) Run() (runErr error) {
 	} else {
 		req.Task = c.Args[0]
 	}
-	_, ttyErr := unix.IoctlGetTermios(int(os.Stdin.Fd()), unix.TIOCGETA)
-	req.TTY = ttyErr == nil && !c.Detach
+	req.TTY = isTerminal(os.Stdin) && !c.Detach
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	job, err := client.Submit(ctx, req)
@@ -185,67 +182,6 @@ func (c *CancelCmd) Run() error {
 	return err
 }
 
-type PruneCmd struct {
-	OlderThan time.Duration `help:"Select completed jobs that finished longer ago than this (for example 720h)." required:""`
-	DryRun    bool          `help:"List what would be deleted without changing anything."`
-	Yes       bool          `help:"Delete the selected jobs."`
-}
-
-func (c *PruneCmd) Validate() error {
-	if c.OlderThan <= 0 {
-		return errors.New("--older-than must be a positive duration")
-	}
-	if c.DryRun == c.Yes {
-		return errors.New("choose exactly one of --dry-run (preview) or --yes (delete)")
-	}
-	return nil
-}
-
-func (c *PruneCmd) Run() error {
-	client, err := daemon.Dial()
-	if err != nil {
-		return err
-	}
-	return c.prune(context.Background(), client, os.Stdout, os.Stderr)
-}
-
-// prune prints the daemon's report: selected, skipped and deleted jobs on
-// stdout; per-job failures and retry guidance on stderr.
-func (c *PruneCmd) prune(ctx context.Context, client daemon.Client, stdout, stderr io.Writer) error {
-	report, err := client.Prune(ctx, daemon.PruneRequest{OlderThan: c.OlderThan, Apply: c.Yes})
-	if err != nil {
-		return err
-	}
-	line := func(action string, e daemon.PruneEntry, detail string) {
-		_, _ = fmt.Fprintf(stdout, "%s  %s  %s  %s  %s  %s\n", action, e.Job.ID, e.Job.Project, e.Job.State, e.Job.Updated.UTC().Format(time.RFC3339), detail)
-	}
-	_, _ = fmt.Fprintf(stdout, "cutoff  %s  (completed more than %s ago)\n", report.Cutoff.UTC().Format(time.RFC3339), c.OlderThan)
-	if report.Apply {
-		for _, e := range report.Deleted {
-			line("deleted", e, "")
-		}
-	} else {
-		for _, e := range report.Eligible {
-			line("would-delete", e, "")
-		}
-	}
-	for _, e := range report.Skipped {
-		line("skipped", e, e.Reason)
-	}
-	for _, e := range report.Failed {
-		_, _ = fmt.Fprintf(stderr, "prune: job %s: %s\n", e.Job.ID, e.Reason)
-	}
-	if report.Apply {
-		_, _ = fmt.Fprintf(stdout, "summary  deleted %d, failed %d, skipped %d, kept %d newer\n", len(report.Deleted), len(report.Failed), len(report.Skipped), report.Recent)
-	} else {
-		_, _ = fmt.Fprintf(stdout, "summary  dry run: would delete %d, skipped %d, kept %d newer; nothing changed\n", len(report.Eligible), len(report.Skipped), report.Recent)
-	}
-	if len(report.Failed) > 0 {
-		return fmt.Errorf("prune: %d job(s) not deleted; they keep their completion time, so rerun offscreen prune --older-than %s --yes to retry", len(report.Failed), c.OlderThan)
-	}
-	return nil
-}
-
 type PauseCmd struct{}
 
 func (*PauseCmd) Run() error {
@@ -284,7 +220,7 @@ type ImageCmd struct {
 	Build   ImageBuildCmd   `cmd:"" help:"Build a new golden image."`
 	Refresh ImageRefreshCmd `cmd:"" help:"Rebuild the image after an update."`
 	Ls      ImageLsCmd      `cmd:"" help:"List golden images and mark current_image."`
-	Prune   ImagePruneCmd   `cmd:"" help:"Preview or delete golden images other than current_image."`
+	Prune   ImagePruneCmd   `cmd:"" help:"Delete golden images other than current_image, asking first; -f skips the prompt."`
 }
 type ImageBuildCmd struct{}
 
@@ -293,94 +229,6 @@ func (*ImageBuildCmd) Run() error { return buildImage(false) }
 type ImageRefreshCmd struct{}
 
 func (*ImageRefreshCmd) Run() error { return buildImage(true) }
-
-type ImagePruneCmd struct {
-	DryRun bool `help:"List what would be deleted without changing anything."`
-	Yes    bool `help:"Delete the selected images."`
-}
-
-func (c *ImagePruneCmd) Validate() error {
-	if c.DryRun == c.Yes {
-		return errors.New("choose exactly one of --dry-run (preview) or --yes (delete)")
-	}
-	return nil
-}
-
-func (c *ImagePruneCmd) Run() error {
-	path, err := config.Path()
-	if err != nil {
-		return err
-	}
-	guard := func(ctx context.Context) error {
-		client, err := daemon.Dial()
-		if err != nil {
-			return err
-		}
-		return requireNoActiveVMJobs(ctx, client.Jobs)
-	}
-	report, err := image.Prune(context.Background(), path, c.Yes, guard)
-	if err != nil {
-		return err
-	}
-	return printImagePrune(report, os.Stdout, os.Stderr)
-}
-
-// requireNoActiveVMJobs refuses to delete images while a started VM job may
-// still clone the image it read before a rebuild. Queued jobs read
-// current_image when they start, so they are safe. A stopped daemon has no jobs.
-func requireNoActiveVMJobs(ctx context.Context, list func(context.Context) ([]daemon.Job, error)) error {
-	jobs, err := list(ctx)
-	if errors.Is(err, daemon.ErrUnavailable) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("check active jobs before deleting images: %w", err)
-	}
-	if ids := activeVMJobs(jobs); len(ids) > 0 {
-		return fmt.Errorf("image prune: VM job(s) %s still active; rerun when they finish", strings.Join(ids, ", "))
-	}
-	return nil
-}
-
-func activeVMJobs(jobs []daemon.Job) []string {
-	var ids []string
-	for _, job := range jobs {
-		if job.Lane == project.LaneVM && job.State != "queued" && !daemon.Terminal(job.State) {
-			ids = append(ids, job.ID)
-		}
-	}
-	return ids
-}
-
-// printImagePrune prints selected, skipped and deleted images on stdout and
-// per-image failures on stderr.
-func printImagePrune(report image.PruneReport, stdout, stderr io.Writer) error {
-	_, _ = fmt.Fprintf(stdout, "current  %s  (kept)\n", report.Current)
-	if report.Apply {
-		for _, e := range report.Deleted {
-			_, _ = fmt.Fprintf(stdout, "deleted  %s\n", e.Name)
-		}
-	} else {
-		for _, e := range report.Eligible {
-			_, _ = fmt.Fprintf(stdout, "would-delete  %s\n", e.Name)
-		}
-	}
-	for _, e := range report.Skipped {
-		_, _ = fmt.Fprintf(stdout, "skipped  %s  %s\n", e.Name, e.Reason)
-	}
-	for _, e := range report.Failed {
-		_, _ = fmt.Fprintf(stderr, "image prune: %s: %s\n", e.Name, e.Reason)
-	}
-	if report.Apply {
-		_, _ = fmt.Fprintf(stdout, "summary  deleted %d, failed %d, skipped %d\n", len(report.Deleted), len(report.Failed), len(report.Skipped))
-	} else {
-		_, _ = fmt.Fprintf(stdout, "summary  dry run: would delete %d, skipped %d; nothing changed\n", len(report.Eligible), len(report.Skipped))
-	}
-	if len(report.Failed) > 0 {
-		return fmt.Errorf("image prune: %d image(s) not deleted; rerun offscreen image prune --yes to retry", len(report.Failed))
-	}
-	return nil
-}
 
 func buildImage(refresh bool) error {
 	path, err := config.Path()

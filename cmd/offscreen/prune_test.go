@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,16 +19,16 @@ import (
 	"github.com/markphelps/offscreen/internal/project"
 )
 
-func TestPruneRequiresPositiveAgeAndExplicitMode(t *testing.T) {
+func TestPruneFlags(t *testing.T) {
 	for _, tc := range []struct {
 		args []string
 		err  string
 	}{
 		{[]string{"prune", "--dry-run"}, "--older-than"},
-		{[]string{"prune", "--older-than", "720h"}, "exactly one of --dry-run"},
-		{[]string{"prune", "--older-than", "720h", "--dry-run", "--yes"}, "exactly one of --dry-run"},
-		{[]string{"prune", "--older-than", "0s", "--yes"}, "positive duration"},
+		{[]string{"prune", "--older-than", "720h", "--dry-run", "-f"}, "can't be used together"},
+		{[]string{"prune", "--older-than", "0s", "-f"}, "positive duration"},
 		{[]string{"prune", "--older-than=-1h", "--dry-run"}, "positive duration"},
+		{[]string{"prune", "--older-than", "720h", "--yes"}, "unknown flag --yes"},
 	} {
 		var cli CLI
 		parser, err := kong.New(&cli)
@@ -35,12 +36,114 @@ func TestPruneRequiresPositiveAgeAndExplicitMode(t *testing.T) {
 		_, err = parser.Parse(tc.args)
 		require.ErrorContains(t, err, tc.err, "%v", tc.args)
 	}
-	var cli CLI
-	parser, err := kong.New(&cli)
-	require.NoError(t, err)
-	_, err = parser.Parse([]string{"prune", "--older-than", "720h", "--dry-run"})
-	require.NoError(t, err)
-	require.Equal(t, 720*time.Hour, cli.Prune.OlderThan)
+	for _, args := range [][]string{
+		{"prune", "--older-than", "720h"},
+		{"prune", "--older-than", "720h", "--dry-run"},
+		{"prune", "--older-than", "720h", "-f"},
+		{"prune", "--older-than", "720h", "--force"},
+	} {
+		var cli CLI
+		parser, err := kong.New(&cli)
+		require.NoError(t, err)
+		_, err = parser.Parse(args)
+		require.NoError(t, err, "%v", args)
+		require.Equal(t, 720*time.Hour, cli.Prune.OlderThan)
+	}
+}
+
+// fakeJobPrune records each request and answers with a preview or an applied
+// report over the same jobs.
+type fakeJobPrune struct {
+	requests []daemon.PruneRequest
+	eligible []daemon.PruneEntry
+}
+
+func (f *fakeJobPrune) run(_ context.Context, req daemon.PruneRequest) (daemon.PruneReport, error) {
+	f.requests = append(f.requests, req)
+	report := daemon.PruneReport{Cutoff: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), Apply: req.Apply, Eligible: f.eligible, Recent: 2}
+	if req.Apply {
+		report.Deleted = f.eligible
+	}
+	return report, nil
+}
+
+func TestPruneAsksOnTerminal(t *testing.T) {
+	old := []daemon.PruneEntry{{Job: daemon.Job{ID: "a1", Project: "hello", State: "done"}}}
+	for _, tc := range []struct {
+		name     string
+		answer   string
+		applied  bool
+		summary  string
+		eligible []daemon.PruneEntry
+		prompted bool
+	}{
+		{name: "yes deletes", answer: "y\n", eligible: old, prompted: true, applied: true, summary: "summary  deleted 1, failed 0, skipped 0, kept 2 newer\n"},
+		{name: "YES deletes", answer: "YES\n", eligible: old, prompted: true, applied: true, summary: "summary  deleted 1, failed 0, skipped 0, kept 2 newer\n"},
+		{name: "no keeps", answer: "n\n", eligible: old, prompted: true, summary: "summary  cancelled; nothing changed\n"},
+		{name: "enter keeps", answer: "\n", eligible: old, prompted: true, summary: "summary  cancelled; nothing changed\n"},
+		{name: "end of input keeps", answer: "", eligible: old, prompted: true, summary: "summary  cancelled; nothing changed\n"},
+		{name: "nothing selected skips prompt", summary: "summary  nothing to delete, skipped 0, kept 2 newer\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeJobPrune{eligible: tc.eligible}
+			var stdout, stderr bytes.Buffer
+			prompt := confirmer{in: strings.NewReader(tc.answer), out: &stderr, terminal: true}
+			cmd := &PruneCmd{OlderThan: 720 * time.Hour}
+			require.NoError(t, cmd.prune(context.Background(), fake.run, prompt, &stdout, &stderr))
+
+			want := []daemon.PruneRequest{{OlderThan: 720 * time.Hour}}
+			if tc.applied {
+				want = append(want, daemon.PruneRequest{OlderThan: 720 * time.Hour, Apply: true})
+			}
+			require.Equal(t, want, fake.requests)
+			require.True(t, strings.HasSuffix(stdout.String(), tc.summary), stdout.String())
+			// The selection, warning and prompt stay off stdout.
+			require.Contains(t, stderr.String(), "cutoff  2026-09-01T00:00:00Z")
+			require.NotContains(t, stdout.String(), "would-delete")
+			if tc.prompted {
+				require.Contains(t, stderr.String(), "would-delete  a1  hello  done")
+				require.Contains(t, stderr.String(), "WARNING! This will delete 1 completed job(s) with their logs and artifacts.\nAre you sure you want to continue? [y/N] ")
+			} else {
+				require.NotContains(t, stderr.String(), "[y/N]")
+			}
+			if tc.applied {
+				require.Contains(t, stdout.String(), "deleted  a1  hello  done")
+			}
+		})
+	}
+}
+
+func TestPruneWithoutTerminal(t *testing.T) {
+	old := []daemon.PruneEntry{{Job: daemon.Job{ID: "a1", Project: "hello", State: "done"}}}
+	noTTY := func(stderr *bytes.Buffer) confirmer {
+		return confirmer{in: strings.NewReader("y\n"), out: stderr, terminal: false}
+	}
+
+	// Neither -f nor --dry-run: refuse before asking the daemon anything.
+	fake := &fakeJobPrune{eligible: old}
+	var stdout, stderr bytes.Buffer
+	err := (&PruneCmd{OlderThan: time.Hour}).prune(context.Background(), fake.run, noTTY(&stderr), &stdout, &stderr)
+	require.ErrorContains(t, err, "pass -f to delete without asking")
+	require.Empty(t, fake.requests)
+	require.Empty(t, stdout.String())
+	require.Empty(t, stderr.String())
+
+	// -f deletes without a prompt.
+	fake = &fakeJobPrune{eligible: old}
+	stdout.Reset()
+	require.NoError(t, (&PruneCmd{OlderThan: time.Hour, Force: true}).prune(context.Background(), fake.run, noTTY(&stderr), &stdout, &stderr))
+	require.Equal(t, []daemon.PruneRequest{{OlderThan: time.Hour, Apply: true}}, fake.requests)
+	require.Contains(t, stdout.String(), "deleted  a1")
+	require.Empty(t, stderr.String())
+
+	// --dry-run previews without a prompt.
+	fake = &fakeJobPrune{eligible: old}
+	stdout.Reset()
+	require.NoError(t, (&PruneCmd{OlderThan: time.Hour, DryRun: true}).prune(context.Background(), fake.run, noTTY(&stderr), &stdout, &stderr))
+	require.Equal(t, []daemon.PruneRequest{{OlderThan: time.Hour}}, fake.requests)
+	require.Contains(t, stdout.String(), "would-delete  a1")
+	require.Contains(t, stdout.String(), "nothing changed")
+	require.Empty(t, stderr.String())
 }
 
 // TestPrunePreviewAndApplyAgainstIsolatedDaemon drives the real daemon through
@@ -100,9 +203,10 @@ func TestPrunePreviewAndApplyAgainstIsolatedDaemon(t *testing.T) {
 	jobsBefore, err := client.Jobs(context.Background())
 	require.NoError(t, err)
 	dbBefore := digest()
+	noTTY := confirmer{in: strings.NewReader(""), out: io.Discard}
 	cmd := &PruneCmd{OlderThan: time.Second, DryRun: true}
 	var stdout, stderr bytes.Buffer
-	require.NoError(t, cmd.prune(context.Background(), client, &stdout, &stderr))
+	require.NoError(t, cmd.prune(context.Background(), client.Prune, noTTY, &stdout, &stderr))
 	out := stdout.String()
 	require.True(t, strings.HasPrefix(out, "cutoff  "), out)
 	require.Contains(t, out, "would-delete  "+oldA.ID)
@@ -128,10 +232,10 @@ func TestPrunePreviewAndApplyAgainstIsolatedDaemon(t *testing.T) {
 	defer func() { _ = os.Chmod(locked, 0o700) }() // #nosec G302 -- restore for cleanup
 	stdout.Reset()
 	stderr.Reset()
-	cmd = &PruneCmd{OlderThan: time.Second, Yes: true}
-	err = cmd.prune(context.Background(), client, &stdout, &stderr)
+	cmd = &PruneCmd{OlderThan: time.Second, Force: true}
+	err = cmd.prune(context.Background(), client.Prune, noTTY, &stdout, &stderr)
 	require.ErrorContains(t, err, "1 job(s) not deleted")
-	require.ErrorContains(t, err, "offscreen prune --older-than 1s --yes")
+	require.ErrorContains(t, err, "offscreen prune --older-than 1s -f")
 	require.Contains(t, stdout.String(), "deleted  "+oldA.ID)
 	require.Contains(t, stdout.String(), "summary  deleted 1, failed 1, skipped 1, kept 1 newer")
 	require.Contains(t, stderr.String(), "prune: job "+oldB.ID+": remove job directory")
@@ -144,7 +248,7 @@ func TestPrunePreviewAndApplyAgainstIsolatedDaemon(t *testing.T) {
 	require.NoError(t, os.Chmod(locked, 0o700)) // #nosec G302 -- restore
 	stdout.Reset()
 	stderr.Reset()
-	require.NoError(t, cmd.prune(context.Background(), client, &stdout, &stderr))
+	require.NoError(t, cmd.prune(context.Background(), client.Prune, noTTY, &stdout, &stderr))
 	require.Contains(t, stdout.String(), "deleted  "+oldB.ID)
 	require.Empty(t, stderr.String())
 	require.NoDirExists(t, oldB.Artifacts)
