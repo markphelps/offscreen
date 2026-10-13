@@ -55,7 +55,7 @@ func TestBlockingRunRetainsIdentityAndWaitsForCleanupOnTruncatedStream(t *testin
 	os.Stderr = writer
 	defer func() { os.Stderr = old; _ = writer.Close(); _ = reader.Close() }()
 	cmd := &RunCmd{Project: "hello", Args: []string{"true"}, Worktree: root, Lane: "auto"}
-	err = cmd.Run()
+	err = cmd.Run(progressSetting{})
 	require.Error(t, err)
 	status, ok := errors.AsType[runExit](err)
 	require.True(t, ok, "runner errors must map to exit 70")
@@ -96,7 +96,7 @@ func TestBlockingRunPreservesTaskExitCodeAndFinalLine(t *testing.T) {
 	require.NoError(t, err)
 	os.Stderr = writer
 	defer func() { os.Stderr = old; _ = writer.Close(); _ = reader.Close() }()
-	err = (&RunCmd{Project: "hello", Args: []string{"true"}, Worktree: root, Lane: "auto"}).Run()
+	err = (&RunCmd{Project: "hello", Args: []string{"true"}, Worktree: root, Lane: "auto"}).Run(progressSetting{})
 	status, ok := errors.AsType[runExit](err)
 	require.True(t, ok)
 	require.Equal(t, runExit(3), status)

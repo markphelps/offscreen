@@ -68,8 +68,31 @@ func JobDir(id string) (string, error) {
 	return filepath.Join(home, "Library", "Caches", "offscreen", "jobs", id), nil
 }
 
+// Frame kinds. stream.bin holds only FrameStdout and FrameStderr. FramePhase
+// is sent only to stream requests that opt in with PhasesParam.
+const (
+	FrameStdout byte = 'o'
+	FrameStderr byte = 'e'
+	// FramePhase carries a JSON-encoded Phase.
+	FramePhase byte = 'p'
+)
+
+// PhasesParam is the query parameter (set to "1") on GET /jobs/{id}/stream
+// that asks for FramePhase frames. Without it the stream carries only
+// FrameStdout and FrameStderr, which is all clients from before phase frames
+// understand.
+const PhasesParam = "phases"
+
+// Phase is a job state change sent in a FramePhase frame, such as "queued"
+// with a reason, then "preparing", "cloning", "booting" and "running".
+type Phase struct {
+	State  string    `json:"state"`
+	Reason string    `json:"reason,omitempty"`
+	Time   time.Time `json:"time"`
+}
+
 // Frames retain the stream identity; unlike a line-oriented log, bytes are not rewritten.
-// Format: one kind byte ('o' stdout, 'e' stderr), big-endian uint32 length, payload.
+// Format: one kind byte (see FrameStdout and friends), big-endian uint32 length, payload.
 func WriteFrame(w io.Writer, kind byte, payload []byte) error {
 	if len(payload) > 1<<20 {
 		return fmt.Errorf("frame too large")

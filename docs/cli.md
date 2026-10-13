@@ -51,6 +51,12 @@ Color is off when `NO_COLOR` is set, `TERM=dumb`, or stderr is not a terminal. T
 
 Every build writes its full log, including Tart's pull output and all guest command output, to `image-builds/offscreen-build-<id>.log` in the config file's directory (`~/Library/Application Support/offscreen/` by default, or beside `OFFSCREEN_CONFIG`). When a step fails, stderr shows that step's last 20 output lines, a one-line error, and the log path. Logs are kept after the build; delete old ones by hand.
 
+## Run phases
+
+While a `run` job waits and starts, stderr shows its phases: `queued` (with the reason, such as `waiting for VM slot`), `preparing` (the host `[prepare]` command), `cloning`, `booting`, and `preparing` again (copying the worktree and running `[guest] setup`). The host lane has no `cloning` or `booting`. The display ends when the wrapped command's output starts or the job reaches `running`; from then on stdout and stderr belong to the command, and stdout never carries phases.
+
+`--progress` picks how phases are shown, as for image builds. `auto` shows them only when stderr is a terminal, so `offscreen run ... 2>log` and scripts see only the command's output. `quiet` hides them; an explicit `tty`, `plain` or `json` shows them even when stderr is not a terminal. `--detach` shows no phases and prints only the job ID. `offscreen logs` never shows phases, because they are not stored with the job's output. The same states, including `cloning` and `booting`, appear in the STATE column of `offscreen status`.
+
 ## Prune
 
 `prune` and `image prune` list what they would delete and a warning on stderr, then ask `Are you sure you want to continue? [y/N]`. Only `y` or `yes` deletes; anything else, including Enter, changes nothing. If nothing is selected, they do not ask. Stdout gets the result: the cutoff (`prune`) or kept `current_image` (`image prune`), each `deleted` and `skipped` entry, and a `summary` line.
