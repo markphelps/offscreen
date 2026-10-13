@@ -66,6 +66,33 @@ func TestStatusTableShowsFirstLineOfMultilineReasons(t *testing.T) {
 	require.Equal(t, "tart clone failed\nline two\tmore\nline three\n", tmpl.String())
 }
 
+func TestStatusListsRetainedJobs(t *testing.T) {
+	jobs := []daemon.Job{
+		{ID: "aaaa000000000001", Project: "hello", Lane: project.LaneVM, State: "failed", Created: listNow.Add(-2 * time.Minute), Reason: "guest failed", Retained: true},
+		{ID: "aaaa000000000002", Project: "hello", Lane: project.LaneVM, State: "failed", Created: listNow.Add(-time.Minute), Reason: "guest failed"},
+	}
+	list := func(c StatusCmd) string {
+		t.Helper()
+		var out bytes.Buffer
+		require.NoError(t, c.print(&out, jobs, listNow))
+		return out.String()
+	}
+	want := "" +
+		"JOB ID             PROJECT   TASK   LANE   STATE               CREATED         REASON\n" +
+		"aaaa000000000001   hello            vm     failed (retained)   2 minutes ago   guest failed\n"
+	require.Equal(t, want, list(StatusCmd{}))
+	require.Equal(t, "aaaa000000000001\n", list(StatusCmd{Quiet: true}))
+	require.Equal(t, "aaaa000000000001 failed true\n", list(StatusCmd{Format: "{{.ID}} {{.State}} {{.Retained}}"}))
+	all := list(StatusCmd{All: true})
+	require.Contains(t, all, "failed (retained)")
+	require.Regexp(t, `aaaa000000000002 +hello +vm +failed +About a minute ago`, all)
+
+	var row map[string]any
+	require.NoError(t, json.Unmarshal([]byte(list(StatusCmd{Format: "json"})), &row))
+	require.Equal(t, "failed", row["State"])
+	require.Equal(t, true, row["Retained"])
+}
+
 func TestStatusQuietPrintsOnlyIDs(t *testing.T) {
 	require.Equal(t, "aaaa000000000003\naaaa000000000002\n", printStatus(t, "-q"))
 	require.Equal(t, "aaaa000000000003\naaaa000000000002\naaaa000000000001\n", printStatus(t, "--all", "--quiet", "--format", "json"))

@@ -39,6 +39,10 @@ type Job struct {
 	Created   time.Time    `json:"created"`
 	Updated   time.Time    `json:"updated"`
 	Deadline  time.Time    `json:"deadline"`
+	// Retained reports a failed --keep VM job whose clone still holds its VM
+	// slot and any exclusive lease until cancel deletes it. It lives only in
+	// the daemon's memory and is never persisted.
+	Retained bool `json:"retained,omitempty"`
 }
 
 func StateDir() (string, error) {

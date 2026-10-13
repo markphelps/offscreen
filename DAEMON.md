@@ -152,7 +152,7 @@ Each host task runs under a guardian process. It writes an owner-only `host-grou
 
 ## Retained `--keep` clones
 
-A failed VM job started with `--keep` keeps its clone, its VM slot (including the one-slot low-memory limit) and any exclusive-project lease. `offscreen status` shows when a retained clone is blocking the queue.
+A failed VM job started with `--keep` keeps its clone, its VM slot (including the one-slot low-memory limit) and any exclusive-project lease. `offscreen status` lists the job with STATE `failed (retained)` until its clone is deleted, and a queued job's REASON names the retained job blocking it.
 
 - `offscreen cancel <job>` deletes the clone and releases the leases. The recorded failure, exit code, logs and artifacts stay. You can safely repeat it; if Tart cleanup fails, the lease stays held until a retry succeeds.
 - Stopping the VM yourself does **not** release the lease.
