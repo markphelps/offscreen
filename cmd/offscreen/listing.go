@@ -58,7 +58,7 @@ func writeList[T any](w io.Writer, rows []T, columns []column, opts ListFlags, i
 			headers[i] = c.Header
 			cells[i] = c.Value
 			if cells[i] == "" {
-				cells[i] = "{{." + c.Field + "}}"
+				cells[i] = "{{cell ." + c.Field + "}}"
 			}
 		}
 		tmpl, err := parseFormat(strings.Join(cells, "\t"))
@@ -98,7 +98,7 @@ func writeList[T any](w io.Writer, rows []T, columns []column, opts ListFlags, i
 // as docker does.
 func parseFormat(text string) (*template.Template, error) {
 	text = strings.NewReplacer(`\t`, "\t", `\n`, "\n").Replace(text)
-	tmpl, err := template.New("format").Parse(text)
+	tmpl, err := template.New("format").Funcs(template.FuncMap{"cell": cell}).Parse(text)
 	if err != nil {
 		return nil, fmt.Errorf("format: %w", err)
 	}
@@ -164,4 +164,15 @@ func humanSince(now, t time.Time) string {
 	default:
 		return plural(hours/24/365, "year")
 	}
+}
+
+// cell formats v for one table cell: its first line, with tabs as spaces so
+// tabwriter keeps the columns, and "…" when lines were dropped. Templates
+// and JSON keep the full value.
+func cell(v any) string {
+	s := strings.ReplaceAll(fmt.Sprint(v), "\t", " ")
+	if first, _, cut := strings.Cut(strings.TrimSpace(s), "\n"); cut {
+		return strings.TrimSpace(first) + " …"
+	}
+	return strings.TrimSpace(s)
 }
