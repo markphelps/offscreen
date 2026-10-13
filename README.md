@@ -35,7 +35,7 @@ cd examples/hello
 offscreen run hello test-ui
 ```
 
-The last command builds a small SwiftUI app on your Mac, runs its UI test inside a fresh VM, streams the output, and prints the job's artifact directory. Nothing opens on your desktop. If `offscreen` isn't found, add `~/.local/bin` to your `PATH`. For other problems, see the [install guide](docs/install.md).
+The last command builds a small SwiftUI app on your Mac, runs its UI test inside a fresh VM, streams the output, and prints the job's artifact directory. Nothing opens on your desktop. The install also adds `ofs` as a shorter name for `offscreen`. If `offscreen` isn't found, add `~/.local/bin` to your `PATH`. For other problems, see the [install guide](docs/install.md).
 
 ## Use it in your repo
 

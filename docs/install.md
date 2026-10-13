@@ -17,14 +17,14 @@ cd offscreen
 mise run install:go   # or without mise: scripts/install.sh
 ```
 
-This builds `offscreen` and `offscreend` into `~/.local/bin` and runs `offscreen daemon install` (below). Set `OFFSCREEN_BIN_DIR` to use another directory. If that directory isn't on your `PATH`, the script says so; add it to your shell profile.
+This builds `offscreen` and `offscreend` into `~/.local/bin`, adds an `ofs` symlink as a shorter name for `offscreen`, and runs `offscreen daemon install` (below). An existing `ofs` that isn't offscreen's own symlink is left alone. Set `OFFSCREEN_BIN_DIR` to use another directory. If that directory isn't on your `PATH`, the script says so; add it to your shell profile.
 
 | Command | What it does |
 | --- | --- |
 | `mise run install` | `install:go`, then builds and installs the [host lane helper](../helper/README.md) (needs Swift 6.2+) |
 | `mise run install:go` | CLI and daemon only. Enough for VM jobs. |
 | `mise run install:helper` | Helper only |
-| `mise run uninstall` | Removes the daemon LaunchAgent, the helper, and both binaries |
+| `mise run uninstall` | Removes the daemon LaunchAgent, the helper, both binaries, and the `ofs` symlink |
 
 Rerun the install after pulling changes. The daemon must be reinstalled whenever `offscreend` is rebuilt. Both binaries must sit in the same directory when you run `daemon install`.
 
