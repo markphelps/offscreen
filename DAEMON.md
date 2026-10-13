@@ -1,19 +1,173 @@
 # Daemon operation
 
-Build both binaries with `go build -o bin/offscreen ./cmd/offscreen` and `go build -o bin/offscreend ./cmd/offscreend`. Run `bin/offscreen daemon install` to stage `offscreend` from beside `offscreen` (or from `PATH`) as `~/Library/Application Support/offscreen/OffscreenDaemon.app/Contents/MacOS/offscreend` and register a KeepAlive LaunchAgent. With `OFFSCREEN_STATE_DIR`, the bundle lives under that state directory instead. Its Info.plist identifies `dev.offscreen.offscreend`, sets `LSUIElement` and describes the Tart VM Local Network connection; the LaunchAgent associates that bundle identifier with the job. Installation preserves `OFFSCREEN_CONFIG` and `OFFSCREEN_STATE_DIR` when set, and passes the installer's `PATH` to launchd so Tart is available.
+`offscreend` owns the job queue, both lanes, job history and cleanup. The CLI and the menu bar helper talk to it over an owner-only Unix socket. See [ARCHITECTURE.md](ARCHITECTURE.md) for how the pieces fit together.
 
-Installation ad-hoc signs the app with an identifier-based designated requirement, verifies it, and registers it with Launch Services before switching the service. A failed preflight keeps the old service; failures during publication or bootstrap attempt to restore its bundle, plist and service and report rollback errors. Reinstall after rebuilding; `bin/offscreen daemon uninstall` stops and removes only its owned LaunchAgent plist, retaining the bundle (and any legacy `bin/offscreend` copy). Run without the service exits 70 and asks you to install it; it does not silently start a daemon. Ensure the selected image exists before submitting jobs.
+## Files
 
-VM jobs require **Offscreen Daemon** to reach a guest over the local network. If macOS prompts, allow it in System Settings > Privacy & Security > Local Network. If guest SSH times out with “no route to host,” check that setting and the Tart network; this error alone does not prove a permission denial. Local ad-hoc signing can require a new grant after rebuilding. A consistently recognized permission identity for distribution needs an Apple-issued signing identity; source installs cannot promise persistence across rebuilds. No Input Monitoring or Notifications grant to the separate host helper can substitute for the daemon's Local Network permission.
+| What | Default path | Notes |
+| --- | --- | --- |
+| Job database | `~/Library/Application Support/offscreen/jobs.sqlite` | Owner-only. Jobs plus the persisted host pause/Not now policy. |
+| Socket | `~/Library/Application Support/offscreen/offscreend.sock` | Owner-only (`0600`). |
+| Daemon app | `~/Library/Application Support/offscreen/OffscreenDaemon.app` | Bundle ID `dev.offscreen.offscreend`, `LSUIElement`. |
+| Job output | `~/Library/Caches/offscreen/jobs/<id>/` | `stream.bin` (stdout/stderr) and artifacts. |
+| Daemon log | `~/Library/Application Support/offscreen/daemon.log` | The daemon's stderr (`--log-level` / `OFFSCREEN_LOG_LEVEL`). |
+| LaunchAgent | `~/Library/LaunchAgents/dev.offscreen.offscreend.plist` | `RunAtLoad` + `KeepAlive`. Not moved by `OFFSCREEN_STATE_DIR`. |
+| Guardian markers | `host-group-*.json` in the state directory | Present only while a host job runs, or after a guardian crash. |
 
-Each `offscreen run` snapshots the submitting CLI process's host environment into its job request (including values containing `=`). The daemon persists this snapshot with the request while the job is queued, preparing, running, or requeued, because a queued or requeued job (including one resumed after a daemon restart) must execute with its own caller's environment. It uses the snapshot to expand `[prepare] share` variables and runs `[prepare] run` with that caller's environment, including the caller's `PATH`. Different clients cannot change each other's host preparation environment. The daemon's own environment and `PATH` still control Tart; host environment variables are never forwarded wholesale into the guest (only the explicit `OFFSCREEN_*` task variables are supplied there). Old requests without a snapshot fall back to the daemon's environment. Active job requests in the owner-only SQLite state file can contain secrets from the submitting environment. When a job becomes terminal (done, failed, cancelled, queue timeout, lost stdin attachment, or orphaned by a daemon exit), the daemon removes the snapshot from the persisted request in the same write that records the terminal state, and drops it from its in-memory job record; the rest of the request (task, argv, lane, flags) is kept for status. A running executor keeps its own copy until it returns. If that write fails, the daemon neither reports the job as complete nor treats the snapshot as removed; it stops admission instead. At startup, terminal records written by earlier versions are rewritten the same way before the socket is served, and startup fails rather than serving if that rewrite fails. A job kept with `--keep` is cleaned up by its job ID, so `cancel <id>` still releases the VM after scrubbing. This is logical removal, not secure erasure: SQLite may leave old values in free pages or its journal until they are overwritten, and existing backups or copies of the state file keep whatever they captured. Protect the state directory and its backups accordingly.
+`OFFSCREEN_STATE_DIR` moves everything except the LaunchAgent. Keep it short, because Unix socket paths have a length limit. `OFFSCREEN_CONFIG` selects the user config.
 
-By default the service uses `~/Library/Application Support/offscreen/jobs.sqlite` and `offscreend.sock`, with job output in `~/Library/Caches/offscreen/jobs/<id>/`. `OFFSCREEN_STATE_DIR` can isolate both the database/socket and the job directories (use a short path because Unix sockets have a path-length limit). The socket is owner-only. `status` includes terminal records; `logs <id>` follows live stdout/stderr by default and returns immediately for a completed job, `logs -f <id>` remains an alias, and `logs --no-follow <id>` prints a snapshot, `artifacts <id>` prints the directory, and `cancel <id>` waits for VM cleanup. Detached jobs use closed stdin; use a blocking run for interactive stdin and a TTY. After a daemon restart, queued attached jobs fail with code 70 because their stdin attachment was lost; they are not retried with empty input. Queued detached jobs may resume, while active jobs fail as orphaned. Queue deadlines return 75; active failures and daemon errors return 70 unless the guest command itself supplied an exit status. The VM lane works without the helper. The host lane requires the separate menu bar helper: `helper/README.md` has source build, signed bundle, installation, and permission steps. `offscreen pause` and `offscreen resume` work through the daemon even when the helper is absent. Host jobs remain queued with a precise waiting reason when the helper is absent, its heartbeat is older than three seconds, Input Monitoring or the event tap is unavailable, the session is locked or display asleep, a camera or microphone is active, the idle threshold is unmet, or the lane is paused. The daemon reads `idle_threshold` and `grace` from its config at startup; restart it after changing either value. A host task inherits the submitting process's environment plus the job-specific `OFFSCREEN_OUT`, `OFFSCREEN_CACHE`, `OFFSCREEN_JOB`, and `OFFSCREEN_LANE` (other caller-provided `OFFSCREEN_*` names are preserved). Host `[prepare] run` finishes before the task; `[guest] setup` does not run on the host. The real desktop is used, without launching a VM.
+## Install
 
-`offscreen prune --older-than <age> --dry-run` previews and `offscreen prune --older-than <age> --yes` applies cleanup of old completed jobs. The age must be a positive Go duration (for example `720h`), and exactly one of `--dry-run` or `--yes` is required; there is no prompt, so it is safe to script. Both go through the daemon over the owner-only socket, which owns the records and job directories. A job is deleted only when it is terminal (done, failed, or cancelled), its completion time (the record's last update when it became terminal) is older than the cutoff, its worker has fully returned, it does not hold a retained `--keep` clone or cleanup in progress, and Tart has no `job-<id>` clone left for it. Deletion removes the job directory derived from its 16-hex-digit ID (stream log and artifacts), then its SQLite row, then its in-memory status entry. A record whose stored artifacts path is not that owned directory is skipped and nothing at that path is touched; symlinks inside a job directory are removed, not followed. Per-project caches, golden images and VMs are never examined or deleted. stdout lists the cutoff, each `would-delete`/`deleted` job and each `skipped` job with its reason, then a summary; a preview changes no rows, files, leases or timestamps. A job whose directory or row cannot be removed is reported on stderr, stays visible, keeps its original completion time, and makes the command exit nonzero; rerun the same command to retry. Prune never rewrites a job's completion time, so a retry or a later run does not reset its age. A failed delete does not stop the daemon. If the daemon has stopped admission, or Tart cannot be listed to confirm VM cleanup, prune deletes nothing and exits nonzero. Deleted rows free SQLite pages for reuse; the database file does not shrink.
+```mermaid
+flowchart LR
+    a["offscreen daemon install"] --> b["find offscreend<br/>beside offscreen, or on PATH"]
+    b --> c["stage app: ad-hoc sign,<br/>verify, register with<br/>Launch Services"]
+    c --> d["stop old service"]
+    d --> e["publish app +<br/>LaunchAgent plist"]
+    e --> f["bootstrap, wait<br/>until it answers"]
+    c -. fails .-> keep["old service untouched"]
+    e -. fails .-> rollback["restore old app,<br/>plist, service"]
+    f -. fails .-> rollback
+```
 
-The daemon also expires completed jobs automatically, using the same engine and protections as `prune --yes`. The age limit is `job_retention` in the user config, default `168h` (seven days); it must be a positive duration, and the daemon reads it only at startup, so restart (or reinstall) the service after changing it. At startup, after recovery, the Tart sweep and terminal environment scrubbing succeed, one pass removes jobs whose completion time is older than the retention before the socket is served or new work is admitted. After that a pass runs every hour while the daemon is up; passes never overlap each other or a manual `prune`, and shutdown stops a pass between jobs and waits for it. Queued and active jobs, jobs whose worker is still cleaning up, retained `--keep` clones, cleanup in progress and jobs whose `job-<id>` clone still exists are never expired, however old; once a `--keep` job is cancelled, its original completion time applies and the next pass removes it. Per-project caches and golden images are not job history and are never expired. Each pass logs its counts (`deleted`, `failed`, `skipped`, `recent`) on stderr: at info level at startup or when it deleted something, at debug otherwise. A job that cannot be deleted is logged at warn level and keeps its original completion time; if Tart cannot be listed, the pass deletes nothing and logs an error. In both cases the daemon keeps serving and the next hourly pass retries. A job orphaned by a daemon exit is marked failed at the next startup, and its age starts then. Expiry runs only while the daemon is running, so history from a long-stopped daemon is removed at its next startup. SQLite reuses the pages of deleted rows for new jobs, so a steady workload keeps the database near its high-water size instead of growing with every job ever run; the file is never shrunk automatically (no routine `VACUUM`), and old freed pages, the journal and backups may still hold deleted data until overwritten.
+- The LaunchAgent carries `OFFSCREEN_CONFIG`, `OFFSCREEN_STATE_DIR` (if set) and the installer's `PATH`, so launchd can find Tart.
+- **Reinstall after rebuilding `offscreend`.**
+- `offscreen daemon uninstall` stops the service and removes only its LaunchAgent plist. The bundle stays.
+- `offscreen run` does not start a daemon on its own. Without the service it exits 70 and tells you to install it.
+- Build an image (`offscreen image build`) before submitting jobs.
 
-The helper automatically shows a nonactivating native panel with a ten-second countdown and **Not now** before admitting a host job; the menu has the same control. **Not now** delays admission for 30 minutes, or `offscreen resume` clears the delay. Manual pause and timed Not now hold are persisted in owner-only SQLite before an action is acknowledged, survive daemon restarts, and resume clears both together. A failed policy write returns an error and stops admission rather than acknowledging an unsaved pause. On detected return, a running task keeps running for the configured grace period; a job still preparing stops immediately so it cannot start a GUI task after the user returns. **Take back now** cancels its process group and requeues that same job at the front only after cleanup. A retried host job receives closed stdin because submitted input cannot be replayed; use detached jobs for host tasks that may be interrupted. If a guardian cannot confirm process cleanup, the daemon stops admission and exits; its next startup waits for the old guardian before admitting work. Each guardian also writes an owner-only `host-group-*.json` recovery marker in the daemon state directory before starting a command. It removes the marker after confirmed process-group cleanup. If a guardian crashes, startup refuses the leftover marker even when the cleanup lock is free. Inspect the marker's command and process details, resolve any remaining task processes, then explicitly remove that marker and restart the daemon. Stored process IDs are inspection hints; verify a process's identity before terminating it. `OFFSCREEN_STATE_DIR` selects the state directory for isolated runs. At grace expiry the job is also requeued when the desktop is still claimed or the helper heartbeat is stale. If the user is idle again, the job continues; subsequent jobs still need a fresh idle gate. The event-source physical-input discriminator is a candidate, not verified hardware behavior until the documented probe is performed. Automatic return detection stays off until the user records a successful physical-versus-injected comparison and enables `VerifiedInputFilter` for the helper. Do not assume a permission denial is evidence against discrimination.
+### Local Network permission
 
-A failed VM job started with `--keep` retains its clone and VM admission slot, including the one-slot low-memory limit and any exclusive-project lease. `status` explains when a retained clone blocks the queue. After inspection, run `offscreen cancel <job-id>`: it waits for that job's clone to stop and be deleted, then releases the leases without changing the recorded failure, exit code, logs, or artifacts. It is safe to repeat; if Tart cleanup fails, the lease remains held and cancel can be retried. Stopping the VM manually does not release the lease: it may be restarted for inspection. On daemon restart, the startup sweep cleans owned clones before admitting new work.
+VM jobs reach the guest over SSH, which needs the daemon's Local Network permission. If macOS prompts, allow **Offscreen Daemon** in System Settings > Privacy & Security > Local Network.
+
+| Symptom | Check |
+| --- | --- |
+| Guest SSH times out with "no route to host" | Local Network setting for Offscreen Daemon, then the Tart network. The error alone does not prove a denial. |
+| Permission lost after rebuilding | Expected with ad-hoc signing. Grant it again. Only an Apple-issued signing identity keeps it across rebuilds. |
+
+The helper's Input Monitoring and Notifications grants do not substitute for this permission.
+
+## Startup and restart
+
+```mermaid
+flowchart TD
+    lock["take daemon.lock<br/>(fail if already running)"] --> markers{"leftover<br/>host-group-*.json?"}
+    markers -- yes --> stop1["refuse to start<br/>(manual recovery)"]
+    markers -- "no (waits up to 10 s<br/>for old guardians)" --> db["open jobs.sqlite<br/>load host policy"]
+    db --> load["load jobs"]
+    load --> fix["fail jobs that cannot resume<br/>(table below)"]
+    fix --> scrub["scrub caller env from<br/>older terminal records"]
+    scrub --> sweep["Tart sweep: stop + delete<br/>owned job-* clones"]
+    sweep -- "Tart list fails" --> stop2["refuse to start"]
+    sweep --> expire["first expiry pass"]
+    expire --> serve["schedule + serve socket<br/>hourly expiry"]
+```
+
+What happens to a job that was in flight when the daemon stopped:
+
+| State at shutdown | After restart |
+| --- | --- |
+| Queued, detached | Resumes after reloading its project contract. It sees any edits made to the contract since submission. |
+| Queued, detached, contract unreadable | `failed` (70) |
+| Queued, attached | `failed` (70). Its stdin attachment is gone, so it is not retried with empty input. |
+| Preparing / running / collecting | `failed` (70), orphaned. Its clone is cleaned up. Its age for expiry starts now. |
+| Retained `--keep` clone | Clone deleted by the sweep. |
+
+A `job-*` clone counts as owned only if it matches a recorded job, or its 16-hex-digit ID has a job directory. Other tools' `job-*` VMs are left alone.
+
+## Caller environment
+
+```mermaid
+flowchart LR
+    cli["offscreen run<br/>(snapshots caller env)"] --> db[("jobs.sqlite<br/>while nonterminal")]
+    db --> prep["[prepare] run + share expansion<br/>on host, caller's env and PATH"]
+    db --> hosttask["host task<br/>caller env + OFFSCREEN_*"]
+    db -. "never forwarded" .-x guest["VM task<br/>only OFFSCREEN_OUT, _JOB,<br/>_LANE, _CACHE"]
+    db -- "terminal state" --> scrubbed["snapshot removed<br/>in the same write"]
+```
+
+- Each job keeps its own caller's environment, so clients can't affect each other's preparation. A requeued job, or one resumed after a restart, still runs with the right environment.
+- The daemon's own environment controls Tart.
+- **Active job records can contain secrets.** If the write that removes the snapshot fails, the daemon stops admission and does not report the job as finished.
+- Removal is logical, not secure erasure. SQLite free pages, the journal, and any backups can keep old values until they are overwritten. Protect the state directory and its backups.
+
+## Host lane
+
+The host lane needs the [menu bar helper](helper/README.md). `offscreen pause` and `offscreen resume` work without it.
+
+```mermaid
+stateDiagram-v2
+    [*] --> waiting
+    waiting --> countdown: all gates pass
+    countdown --> waiting: Not now (30 min hold)
+    countdown --> running: 10 s elapse
+    running --> grace: you return
+    grace --> running: idle again
+    grace --> requeued: Take back now, or grace expires<br/>while desktop claimed / helper stale
+    running --> [*]: job ends
+    requeued --> waiting: after process-group cleanup,<br/>at the front of the queue
+```
+
+A job waits, with its reason shown in `offscreen status`, until all of these hold:
+
+| Gate | Fails when |
+| --- | --- |
+| Helper | Absent, or heartbeat older than 3 s |
+| Permissions | Input Monitoring or the event tap is unavailable |
+| Session | Locked, or display asleep |
+| Privacy | Camera or microphone in use |
+| Idle | `idle_threshold` not reached |
+| Policy | Paused, or a **Not now** hold is active |
+
+- **Pause and Not now persist** in SQLite before they're acknowledged, and they survive restarts. `offscreen resume` clears both. A failed write stops admission.
+- **On return:** a job that is still preparing stops at once, so it can't start a GUI task. A running job gets the `grace` period. At grace expiry it is also requeued if the desktop is still claimed or the helper's heartbeat is stale.
+- **Requeued jobs get closed stdin.** Use detached host jobs if a task may be interrupted.
+- `idle_threshold` and `grace` are read at startup. Restart the daemon after changing them.
+- Automatic return detection is off until you run the [helper probe](helper/README.md) and enable `VerifiedInputFilter`. A permission denial is not evidence either way.
+
+### Guardian recovery
+
+Each host task runs under a guardian process. It writes an owner-only `host-group-*.json` marker before starting the command and removes the marker once cleanup of the process group is confirmed.
+
+| Situation | Daemon behavior | What you do |
+| --- | --- | --- |
+| Guardian can't confirm cleanup | Stops admission and exits. The next start waits for the old guardian. | Nothing, unless it persists. |
+| Guardian crashed, marker left | Refuses to start, even if the cleanup lock is free | Read the marker's command and process details. Make sure no task processes are left (check a process's identity before killing it; stored PIDs are hints only). Then delete the marker and restart. |
+
+## Retained `--keep` clones
+
+A failed VM job started with `--keep` keeps its clone, its VM slot (including the one-slot low-memory limit) and any exclusive-project lease. `offscreen status` shows when a retained clone is blocking the queue.
+
+- `offscreen cancel <job>` deletes the clone and releases the leases. The recorded failure, exit code, logs and artifacts stay. You can safely repeat it; if Tart cleanup fails, the lease stays held until a retry succeeds.
+- Stopping the VM yourself does **not** release the lease.
+
+## Job history: expiry and prune
+
+```mermaid
+flowchart TD
+    job["job"] --> t{"terminal?<br/>(done / failed / cancelled)"}
+    t -- no --> keep["keep"]
+    t -- yes --> age{"completed before cutoff?"}
+    age -- no --> keep
+    age -- yes --> busy{"worker returned, no --keep clone,<br/>no cleanup in progress?"}
+    busy -- no --> keep
+    busy -- yes --> tart{"Tart shows no job-&lt;id&gt; clone?"}
+    tart -- no --> keep
+    tart -- yes --> path{"artifacts path is the<br/>owned job dir?"}
+    path -- no --> skip["skip, touch nothing"]
+    path -- yes --> del["delete job dir → row → memory entry"]
+```
+
+| | Automatic expiry | `offscreen prune` |
+| --- | --- | --- |
+| Cutoff | `job_retention` (default `168h`), read at startup | `--older-than <duration>`, positive |
+| When | Once at startup before serving, then hourly | On demand; `--dry-run` previews, `--yes` applies, no prompt |
+| Output | Counts on stderr (info at startup or after a deletion, otherwise debug) | stdout: cutoff, each `would-delete`/`deleted`/`skipped` job, summary |
+| A deletion fails | Logged at warn; retried next pass | Reported on stderr, exits nonzero; rerun to retry |
+| Tart can't be listed | Pass deletes nothing, logs an error | Deletes nothing, exits nonzero |
+
+- Both use the same engine and never overlap. A failed delete never rewrites a job's completion time, and never stops the daemon.
+- A cancelled `--keep` job keeps its original completion time.
+- Never touched: per-project caches, golden images, VMs, and anything outside a job's own directory. Symlinks inside a job directory are removed, not followed.
+- Freed SQLite pages are reused, so the database stays near its high-water size. It never shrinks (there is no routine `VACUUM`), and old pages, the journal and backups can still hold deleted data.
+- Expiry runs only while the daemon is up. Old history from a long-stopped daemon is removed at its next startup.
