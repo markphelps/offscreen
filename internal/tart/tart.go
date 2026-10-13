@@ -6,9 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"strings"
 )
+
+// errorLines is how many trailing output lines a failed command's error keeps.
+const errorLines = 20
 
 type VM struct {
 	Name    string `json:"Name"`
@@ -28,9 +33,19 @@ func (c Client) command(ctx context.Context, args ...string) ([]byte, error) {
 	}
 	out, err := exec.CommandContext(ctx, binary, args...).CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("tart %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		return nil, fmt.Errorf("tart %s: %w: %s", strings.Join(args, " "), err, lastLines(string(out), errorLines))
 	}
 	return out, nil
+}
+
+// lastLines returns at most n trailing lines of s, trimmed of surrounding
+// space, so an error never carries a command's full output.
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (c Client) List(ctx context.Context) ([]VM, error) {
@@ -45,9 +60,27 @@ func (c Client) List(ctx context.Context) ([]VM, error) {
 	return vms, nil
 }
 
-func (c Client) Pull(ctx context.Context, name string) error {
-	_, err := c.command(ctx, "pull", name)
-	return err
+// Pull downloads name, copying Tart's stdout and stderr to out (which may be
+// nil) as they arrive. Tart has no supported progress interface, so callers
+// must not parse or display this output; it is for logs and error tails.
+// CI=1 makes Tart print one line per update instead of redrawing with
+// escape codes. The error does not include the output.
+func (c Client) Pull(ctx context.Context, name string, out io.Writer) error {
+	if out == nil {
+		out = io.Discard
+	}
+	binary := c.Binary
+	if binary == "" {
+		binary = "tart"
+	}
+	cmd := exec.CommandContext(ctx, binary, "pull", name)
+	cmd.Env = append(os.Environ(), "CI=1")
+	// One writer for both streams, so exec serializes the writes.
+	cmd.Stdout, cmd.Stderr = out, out
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("tart pull %s: %w", name, err)
+	}
+	return nil
 }
 
 func (c Client) Clone(ctx context.Context, from, to string) error {

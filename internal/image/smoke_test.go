@@ -39,7 +39,7 @@ func TestImageSmoke(t *testing.T) {
 	}()
 	vm, err := client.Start(ctx, id)
 	require.NoError(t, err)
-	connection, err := waitForGuest(ctx, client, guest.Credentials{User: cfg.Image.SSHUser, Password: cfg.Image.SSHPassword, Key: cfg.Image.SSHKey}, id)
+	connection, err := waitForGuest(ctx, client, id, guest.Credentials{User: cfg.Image.SSHUser, Password: cfg.Image.SSHPassword, Key: cfg.Image.SSHKey}.Dial)
 	require.NoError(t, err)
 	defer func() { _ = connection.Close() }()
 	out, err := guest.Run(connection, "/usr/bin/automationmodetool || true", nil)
