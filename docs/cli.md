@@ -59,7 +59,7 @@ While a `run` job waits and starts, stderr shows its phases: `queued` (with the 
 
 ## Prune
 
-`prune` and `image prune` list what they would delete and a warning on stderr, then ask `Are you sure you want to continue? [y/N]`. Only `y` or `yes` deletes; anything else, including Enter, changes nothing. If nothing is selected, they do not ask. Stdout gets the result: the cutoff (`prune`) or kept `current_image` (`image prune`), each `deleted` and `skipped` entry, and a `summary` line.
+`prune` and `image prune` list what they would delete and a warning on stderr, then ask `Are you sure you want to continue? [y/N]`. Only `y` or `yes` deletes; anything else, including Enter, changes nothing. If nothing is selected, they do not ask. After `y`, `image prune` deletes only the images it listed; an image that became eligible while it waited, such as the previous `current_image` after a build finished, is reported as `skipped`. Stdout gets the result: the cutoff (`prune`) or kept `current_image` (`image prune`), each `deleted` and `skipped` entry, and a `summary` line.
 
 | Flag | Meaning |
 | --- | --- |
