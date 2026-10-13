@@ -6,7 +6,7 @@ Run from a directory under a repo containing `.offscreen.toml`, or pass `--workt
 | --- | --- |
 | `offscreen run <project> <task>` | Queue a named task, stream output, and wait for its result. |
 | `offscreen run <project> -- <cmd> [args...]` | Run an argv command directly; defaults to the VM lane. |
-| `offscreen status` | List queued and active jobs, newest first, with lane, state, age, and waiting reason. `-a` also lists completed jobs. |
+| `offscreen status` | List queued and active jobs, newest first, with lane, state, age, and waiting reason. Failed `--keep` jobs whose clone is still retained are listed too, as `failed (retained)`, until cancelled. `-a` also lists completed jobs. |
 | `offscreen logs <job>` | Follow stdout/stderr while active; return after a completed job. `-f` also follows; `--no-follow` prints a snapshot. |
 | `offscreen artifacts <job>` | Print the job's artifact directory. |
 | `offscreen cancel <job>` | Cancel an active/queued job and wait for cleanup; also delete a retained `--keep` clone without changing its recorded result. |
@@ -30,7 +30,7 @@ Run from a directory under a repo containing `.offscreen.toml`, or pass `--workt
 | `--format '<template>'` | A Go [text/template](https://pkg.go.dev/text/template) applied to each row, for example `'{{.ID}} {{.State}}'`. |
 | `--format 'table <template>'` | A table with headers built from the template, for example `'table {{.ID}}\t{{.State}}'`. `\t` and `\n` are expanded. |
 
-Template fields for `status`: `.ID`, `.Project`, `.Task`, `.Lane`, `.State`, `.Created` (relative, such as `5 minutes ago`), `.CreatedAt` (a time), and `.Reason`.
+Template fields for `status`: `.ID`, `.Project`, `.Task`, `.Lane`, `.State`, `.Created` (relative, such as `5 minutes ago`), `.CreatedAt` (a time), `.Reason`, and `.Retained` (true while a failed `--keep` job's clone is retained; `.State` stays `failed`).
 
 Template fields for `image ls`: `.Name`, `.Current` (true or false), `.Running`, `.Created` (the build date in the image name), `.Size` (such as `73 GB`), and `.SizeGB`.
 

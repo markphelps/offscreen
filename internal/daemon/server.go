@@ -964,7 +964,7 @@ func (s *Server) handleJobs(w http.ResponseWriter, _ *http.Request) {
 	defer s.mu.Unlock()
 	jobs := make([]Job, 0, len(s.jobs))
 	for _, job := range s.jobs {
-		jobs = append(jobs, job.job)
+		jobs = append(jobs, job.record())
 	}
 	slices.SortFunc(jobs, func(a, b Job) int { return a.Created.Compare(b.Created) })
 	respond(w, jobs)
@@ -985,7 +985,14 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	respond(w, job.job)
+	respond(w, job.record())
+}
+
+// record is the job as the socket API reports it. Callers hold Server.mu.
+func (w *worker) record() Job {
+	job := w.job
+	job.Retained = w.retained
+	return job
 }
 
 func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
@@ -1039,7 +1046,7 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	record := job.job
+	record := job.record()
 	s.mu.Unlock()
 	respond(w, record)
 }

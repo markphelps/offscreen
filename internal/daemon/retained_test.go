@@ -276,3 +276,36 @@ func TestCloseWaitsForRetainedCleanup(t *testing.T) {
 	require.NoError(t, <-closed)
 	require.NoFileExists(t, filepath.Join(dir, "job-"+kept.ID))
 }
+
+func TestRetainedJobsReportRetainedUntilCancelled(t *testing.T) {
+	s, c, root := fixture(t, keptExecutor, func() (uint64, error) { return 20 << 30, nil })
+	dir := retainedTart(t, s)
+	kept := keptJob(t, c, root, dir)
+	assertHeld(t, s, kept.ID, 1)
+	ctx := context.Background()
+	j, err := c.Job(ctx, kept.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", j.State)
+	require.True(t, j.Retained)
+	jobs, err := c.Jobs(ctx)
+	require.NoError(t, err)
+	require.True(t, slices.ContainsFunc(jobs, func(j Job) bool { return j.ID == kept.ID && j.Retained }))
+
+	cancelled, err := c.Cancel(ctx, kept.ID)
+	require.NoError(t, err)
+	require.False(t, cancelled.Retained)
+	require.Equal(t, "failed", cancelled.State)
+	j, err = c.Job(ctx, kept.ID)
+	require.NoError(t, err)
+	require.False(t, j.Retained)
+}
+
+func TestUnkeptJobsAreNotRetained(t *testing.T) {
+	_, c, root := fixture(t, func(_ context.Context, o run.Options) run.Result {
+		o.Phase("running")
+		return run.Result{Code: 3, Err: errors.New("guest failed")}
+	}, func() (uint64, error) { return 20 << 30, nil })
+	j := submitFixture(t, c, root, Request{Detach: true})
+	record := waitState(t, c, j.ID, "failed")
+	require.False(t, record.Retained)
+}

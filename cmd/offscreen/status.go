@@ -27,6 +27,9 @@ type jobRow struct {
 	Created   string
 	CreatedAt time.Time
 	Reason    string
+	// Retained marks a failed --keep VM job whose clone still holds its VM
+	// slot until cancel deletes it.
+	Retained bool
 }
 
 var jobColumns = []column{
@@ -34,7 +37,7 @@ var jobColumns = []column{
 	{Header: "PROJECT", Field: "Project"},
 	{Header: "TASK", Field: "Task"},
 	{Header: "LANE", Field: "Lane"},
-	{Header: "STATE", Field: "State"},
+	{Header: "STATE", Field: "State", Value: `{{cell .State}}{{if .Retained}} (retained){{end}}`},
 	{Header: "CREATED", Field: "Created"},
 	{Header: "REASON", Field: "Reason"},
 }
@@ -58,14 +61,15 @@ func (c *StatusCmd) run(ctx context.Context, client daemon.Client, stdout, stder
 	return c.print(stdout, jobs, time.Now())
 }
 
-// print lists queued and active jobs, or every job with All, newest first.
+// print lists queued, active and retained jobs, or every job with All, newest
+// first.
 func (c *StatusCmd) print(w io.Writer, jobs []daemon.Job, now time.Time) error {
 	rows := make([]jobRow, 0, len(jobs))
 	for _, j := range jobs {
-		if !c.All && daemon.Terminal(j.State) {
+		if !c.All && daemon.Terminal(j.State) && !j.Retained {
 			continue
 		}
-		rows = append(rows, jobRow{ID: j.ID, Project: j.Project, Task: j.Task, Lane: string(j.Lane), State: j.State, Created: humanSince(now, j.Created), CreatedAt: j.Created, Reason: j.Reason})
+		rows = append(rows, jobRow{ID: j.ID, Project: j.Project, Task: j.Task, Lane: string(j.Lane), State: j.State, Created: humanSince(now, j.Created), CreatedAt: j.Created, Reason: j.Reason, Retained: j.Retained})
 	}
 	slices.SortStableFunc(rows, func(a, b jobRow) int {
 		return cmp.Or(b.CreatedAt.Compare(a.CreatedAt), cmp.Compare(b.ID, a.ID))
