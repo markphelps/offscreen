@@ -915,7 +915,8 @@ func (s *Server) Serve(ctx context.Context) error {
 	mux.HandleFunc("POST /jobs/{id}/input", s.handleInput)
 	mux.HandleFunc("GET /jobs/{id}/stream", s.handleStream)
 	mux.HandleFunc("POST /prune", s.handlePrune)
-	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	mux.HandleFunc("GET /version", s.handleVersion)
+	server := &http.Server{Handler: logProtocol(mux), ReadHeaderTimeout: 5 * time.Second}
 	go func() { // #nosec G118 -- shutdown must run after the serving context is cancelled
 		select {
 		case <-ctx.Done():

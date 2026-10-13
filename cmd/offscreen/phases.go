@@ -11,14 +11,16 @@ import (
 )
 
 // phaseDisplay shows a job's phases (queued, preparing, cloning, booting) on
-// stderr until the wrapped command starts. Stderr written before then, such
-// as host [prepare] output, is shown as the current phase's output. The
-// running phase, or any stdout, closes the renderer, so from then on stdout
-// and stderr belong to the command.
+// stderr until the wrapped command starts. Stderr written while a phase is
+// shown, such as host [prepare] output, is shown as that phase's output;
+// stderr before the first phase passes through untouched. The running
+// phase, or any stdout, closes the renderer, so from then on stdout and
+// stderr belong to the command.
 type phaseDisplay struct {
 	mu       sync.Mutex
 	renderer progress.Renderer
 	closed   bool
+	shown    bool     // a phase frame arrived and is on display
 	started  bool     // the command started: running phase or stdout
 	partial  []byte   // unterminated stderr line
 	tail     []string // last phase output lines, for a job that fails early
@@ -59,6 +61,7 @@ func (d *phaseDisplay) phase(p daemon.Phase) {
 		return
 	}
 	d.flushLocked()
+	d.shown = true
 	d.renderer.Emit(progress.Event{Kind: progress.KindPhase, Time: p.Time, Phase: p.State, Reason: p.Reason})
 }
 
@@ -109,11 +112,13 @@ func (d *phaseDisplay) finish(w io.Writer) {
 }
 
 // phaseOutput shows p as the current phase's output and reports true, or
-// reports false once the display is closed.
+// reports false when no phase is shown: before the first phase frame, since
+// a renderer with nothing live would drop the output, and once the display
+// is closed.
 func (d *phaseDisplay) phaseOutput(p []byte) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.closed {
+	if d.closed || !d.shown {
 		return false
 	}
 	d.partial = append(d.partial, p...)
@@ -160,10 +165,17 @@ func (c phaseWriter) Write(p []byte) (int, error) {
 	return c.w.Write(p)
 }
 
-// streamRun follows job id to completion. With a display, it asks the daemon
-// for phase frames and shows them until the command starts; the display is
+// streamRun follows job id to completion. With a display and a daemon that
+// advertises phases, it asks for phase frames and shows them until the
+// command starts. Otherwise output passes through untouched. The display is
 // closed before streamRun returns.
 func streamRun(ctx context.Context, client daemon.Client, id string, display *phaseDisplay, stdout, stderr io.Writer) (daemon.Job, error) {
+	if display != nil {
+		if info, err := client.Version(ctx); err != nil || !info.Supports(daemon.FeaturePhases) {
+			display.Close()
+			display = nil
+		}
+	}
 	if display == nil {
 		return client.Stream(ctx, id, stdout, stderr)
 	}

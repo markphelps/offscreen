@@ -262,6 +262,8 @@ func TestExplicitCancelWinsOverHostRequeueDuringCleanup(t *testing.T) {
 func TestTruncatedStreamAndMalformedSubmissionAreTransportErrors(t *testing.T) {
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/version":
+			http.NotFound(w, r)
 		case "/submit":
 			_, _ = w.Write([]byte(`{"id":`))
 		case "/jobs/job/stream":

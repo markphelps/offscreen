@@ -26,7 +26,7 @@ This builds `offscreen` and `offscreend` into `~/.local/bin`, adds an `ofs` syml
 | `mise run install:helper` | Helper only |
 | `mise run uninstall` | Removes the daemon LaunchAgent, the helper, both binaries, and the `ofs` symlink |
 
-Rerun the install after pulling changes. The daemon must be reinstalled whenever `offscreend` is rebuilt. Both binaries must sit in the same directory when you run `daemon install`.
+Rerun the install after pulling changes. The daemon must be reinstalled whenever `offscreend` is rebuilt. `offscreen version` shows whether the running daemon matches the CLI. Both binaries must sit in the same directory when you run `daemon install`.
 
 ## Build the golden image
 
