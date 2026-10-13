@@ -16,6 +16,7 @@ Run from a directory under a repo containing `.offscreen.toml`, or pass `--workt
 | `offscreen image ls` | List golden images, newest first, with build date and size. `*` in the CURRENT column marks `current_image`. |
 | `offscreen image prune` | Delete golden images other than `current_image`. Only names `image build` produces are selected; running images are skipped. Refuses if `current_image` is missing from Tart, or (when deleting) while a VM job is active. Asks first; see [Prune](#prune). |
 | `offscreen daemon install` / `offscreen daemon uninstall` | Register/start or stop/remove the user's daemon LaunchAgent. |
+| `offscreen version` | Print this client's build version and protocol, then the daemon's. See [Versions](#versions). |
 
 ## List output
 
@@ -53,9 +54,27 @@ Every build writes its full log, including Tart's pull output and all guest comm
 
 ## Run phases
 
-While a `run` job waits and starts, stderr shows its phases: `queued` (with the reason, such as `waiting for VM slot`), `preparing` (the host `[prepare]` command), `cloning`, `booting`, and `preparing` again (copying the worktree and running `[guest] setup`). The host lane has no `cloning` or `booting`. Output before the command starts, such as `[prepare]` build logs, is shown under its phase (the last few lines in a terminal); if the job fails before the command starts, the last 20 lines are repeated after the phases, and `offscreen logs <job>` has all of it. The display ends when the job reaches `running` or writes to stdout; from then on stdout and stderr belong to the command, and stdout never carries phases.
+While a `run` job waits and starts, stderr shows its phases (when the daemon supports them; see [Versions](#versions)): `queued` (with the reason, such as `waiting for VM slot`), `preparing` (the host `[prepare]` command), `cloning`, `booting`, and `preparing` again (copying the worktree and running `[guest] setup`). The host lane has no `cloning` or `booting`. Output before the command starts, such as `[prepare]` build logs, is shown under its phase (the last few lines in a terminal); if the job fails before the command starts, the last 20 lines are repeated after the phases, and `offscreen logs <job>` has all of it. The display ends when the job reaches `running` or writes to stdout; from then on stdout and stderr belong to the command, and stdout never carries phases.
 
 `--progress` picks how phases are shown, as for image builds. `auto` shows them only when stderr is a terminal, so `offscreen run ... 2>log` and scripts see only the command's output. `quiet` hides them; an explicit `tty`, `plain` or `json` shows them even when stderr is not a terminal. `--detach` shows no phases and prints only the job ID. `offscreen logs` never shows phases, because they are not stored with the job's output. The same states, including `cloning` and `booting`, appear in the STATE column of `offscreen status`.
+
+## Versions
+
+`offscreen version` prints two lines on stdout:
+
+```text
+client: 0.3.0 (protocol 1)
+daemon: 0.2.0 (protocol 1)
+```
+
+The daemon line is `daemon: not running` when the daemon is down and `daemon: protocol 0 (pre-negotiation)` for a daemon built before version negotiation. Builds made with plain `go build` report `dev`. Compatibility depends only on the protocol number.
+
+When the CLI and daemon differ:
+
+- If the daemon is older but still usable, `status` and `run` print one line on stderr, `warning: offscreend speaks protocol N, older than this offscreen's M; ...`. Features the daemon lacks stay off; against a protocol 0 daemon, `run` shows no phases. Stdout is unchanged.
+- If the daemon is too old for this client, every command that talks to it fails with `offscreend speaks protocol N, but this offscreen needs protocol M or later` and a hint line, and exits 70.
+
+Either way, run `offscreen daemon install` to restart the daemon with this build. See [versions and upgrades](../DAEMON.md#versions-and-upgrades).
 
 ## Prune
 

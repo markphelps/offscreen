@@ -11,13 +11,20 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
 
 var ErrUnavailable = errors.New("offscreend is not running; run offscreen daemon install")
 
-type Client struct{ http *http.Client }
+// Client talks to offscreend over its Unix socket. Copies share one cached
+// version probe.
+type Client struct {
+	http        *http.Client
+	probe       *probe
+	minProtocol int
+}
 
 func Dial() (Client, error) {
 	socket, err := Socket()
@@ -30,14 +37,20 @@ func Dial() (Client, error) {
 			return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
 		}
 		return conn, nil
-	}}}}, nil
+	}}}, probe: &probe{}, minProtocol: MinDaemonProtocol}, nil
 }
 
+// call sends one request, after checking once per Client that the daemon's
+// protocol is one this client can use.
 func (c Client) call(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
+	if err := c.compatible(ctx); err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, method, "http://offscreen"+path, body)
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set(ProtocolHeader, strconv.Itoa(ProtocolVersion))
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("daemon transport: %w", err)
@@ -153,8 +166,9 @@ func (c Client) Stream(ctx context.Context, id string, stdout, stderr io.Writer)
 }
 
 // StreamPhases is Stream that also asks the daemon for phase frames and passes
-// each one to phase, in order with the output. A nil phase is Stream. A daemon
-// from before phase frames ignores the request and sends output only.
+// each one to phase, in order with the output. A nil phase is Stream. Check
+// Version(ctx).Supports(FeaturePhases) first: a daemon from before phase
+// frames ignores the request and sends output only.
 func (c Client) StreamPhases(ctx context.Context, id string, stdout, stderr io.Writer, phase func(Phase)) (Job, error) {
 	return c.stream(ctx, id, stdout, stderr, phase)
 }

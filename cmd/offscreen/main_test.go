@@ -31,7 +31,8 @@ func TestRunSubmissionCapturesCallerEnvironment(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = listener.Close() }()
 	received := make(chan daemon.Request, 1)
-	server := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux() // no GET /version: a pre-negotiation daemon
+	mux.HandleFunc("POST /submit", func(w http.ResponseWriter, r *http.Request) {
 		var req daemon.Request
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), 400)
@@ -39,7 +40,8 @@ func TestRunSubmissionCapturesCallerEnvironment(t *testing.T) {
 		}
 		received <- req
 		_ = json.NewEncoder(w).Encode(daemon.Job{ID: "fake", Artifacts: root})
-	})}
+	})
+	server := &http.Server{ReadHeaderTimeout: time.Second, Handler: mux}
 	go func() { _ = server.Serve(listener) }()
 	defer func() { _ = server.Close() }()
 	require.NoError(t, (&RunCmd{Project: "hello", Args: []string{"test-ui"}, Worktree: root, Detach: true}).Run(progressSetting{}))
