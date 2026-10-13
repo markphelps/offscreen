@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -19,12 +20,14 @@ import (
 	"github.com/markphelps/offscreen/internal/exitcode"
 	"github.com/markphelps/offscreen/internal/image"
 	"github.com/markphelps/offscreen/internal/logging"
+	"github.com/markphelps/offscreen/internal/progress"
 	"github.com/markphelps/offscreen/internal/project"
 	"github.com/markphelps/offscreen/internal/run"
 )
 
 type CLI struct {
 	LogLevel  string       `help:"Log level (debug, info, warn, error)." env:"OFFSCREEN_LOG_LEVEL" default:"info"`
+	Progress  string       `help:"Progress output for image build and refresh: auto, tty, plain, quiet or json. Defaults to OFFSCREEN_PROGRESS, else auto." placeholder:"MODE"`
 	Run       RunCmd       `cmd:"" help:"Run a project task or command."`
 	Status    StatusCmd    `cmd:"" help:"List queued and active jobs; -a includes completed ones."`
 	Logs      LogsCmd      `cmd:"" help:"Print or follow job output."`
@@ -224,26 +227,69 @@ type ImageCmd struct {
 }
 type ImageBuildCmd struct{}
 
-func (*ImageBuildCmd) Run() error { return buildImage(false) }
+func (*ImageBuildCmd) Run(setting progressSetting) error { return buildImage(false, setting) }
 
 type ImageRefreshCmd struct{}
 
-func (*ImageRefreshCmd) Run() error { return buildImage(true) }
+func (*ImageRefreshCmd) Run(setting progressSetting) error { return buildImage(true, setting) }
 
-func buildImage(refresh bool) error {
+// progressSetting carries the global --progress flag to the commands that
+// render progress. The flag wins over OFFSCREEN_PROGRESS.
+type progressSetting struct{ flag string }
+
+func (p progressSetting) mode() (progress.Mode, error) {
+	return progress.Select(p.flag, os.Getenv)
+}
+
+func buildImage(refresh bool, setting progressSetting) error {
 	path, err := config.Path()
 	if err != nil {
 		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	name, err := image.Build(ctx, path, refresh)
+	return runBuild(ctx, path, refresh, setting, image.Build, os.Stdout, os.Stderr)
+}
+
+type imageBuilder func(ctx context.Context, path string, refresh bool, sink progress.Sink) (string, error)
+
+// runBuild runs build with a progress renderer on stderr. Stdout gets only
+// the image name. A failed step prints its last output lines on stderr and
+// returns a one-line error with a hint naming the full build log.
+func runBuild(ctx context.Context, path string, refresh bool, setting progressSetting, build imageBuilder, stdout, stderr io.Writer) error {
+	mode, err := setting.mode()
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(os.Stdout, name)
+	renderer := progress.New(stderr, mode, progress.Options{})
+	name, err := build(ctx, path, refresh, renderer)
+	_ = renderer.Close()
+	if err != nil {
+		stepErr, ok := errors.AsType[*image.StepError](err)
+		if !ok {
+			return err
+		}
+		if len(stepErr.Tail) > 0 {
+			_, _ = fmt.Fprintf(stderr, "> %s (last %d lines of output):\n", stepErr.Step, len(stepErr.Tail))
+			for _, line := range stepErr.Tail {
+				_, _ = fmt.Fprintf(stderr, "  %s\n", line)
+			}
+		}
+		return hintError{err: err, hint: "full build log: " + stepErr.Log}
+	}
+	_, err = fmt.Fprintln(stdout, name)
 	return err
 }
+
+// hintError is a one-line error followed by a hint line.
+type hintError struct {
+	err  error
+	hint string
+}
+
+func (e hintError) Error() string { return e.err.Error() + "\n" + e.hint }
+
+func (e hintError) Unwrap() error { return e.err }
 
 func execute(args []string) error {
 	var cli CLI
@@ -261,7 +307,12 @@ func execute(args []string) error {
 		return err
 	}
 	slog.SetDefault(logger)
-	return ctx.Run()
+	if cli.Progress != "" {
+		if _, err := progress.ParseMode(cli.Progress); err != nil {
+			return fmt.Errorf("--progress: %w", err)
+		}
+	}
+	return ctx.Run(progressSetting{flag: cli.Progress})
 }
 
 func main() {

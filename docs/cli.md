@@ -12,7 +12,7 @@ Run from a directory under a repo containing `.offscreen.toml`, or pass `--workt
 | `offscreen cancel <job>` | Cancel an active/queued job and wait for cleanup; also delete a retained `--keep` clone without changing its recorded result. |
 | `offscreen prune --older-than 720h` | Delete completed jobs (record, logs and artifacts) that finished longer ago than the given age. Queued, active and retained jobs are skipped. Asks first; see [Prune](#prune). |
 | `offscreen pause` / `offscreen resume` | Pause/release the host lane; the manual pause survives daemon restarts. Resume also clears a **Not now** delay. |
-| `offscreen image build` / `offscreen image refresh` | Build a golden image; refresh pulls the base image again before rebuilding. |
+| `offscreen image build` / `offscreen image refresh` | Build a golden image; refresh pulls the base image again before rebuilding. Shows each step on stderr and prints only the new image name on stdout; see [Image build output](#image-build-output). |
 | `offscreen image ls` | List golden images, newest first, with build date and size. `*` in the CURRENT column marks `current_image`. |
 | `offscreen image prune` | Delete golden images other than `current_image`. Only names `image build` produces are selected; running images are skipped. Refuses if `current_image` is missing from Tart, or (when deleting) while a VM job is active. Asks first; see [Prune](#prune). |
 | `offscreen daemon install` / `offscreen daemon uninstall` | Register/start or stop/remove the user's daemon LaunchAgent. |
@@ -32,6 +32,24 @@ Run from a directory under a repo containing `.offscreen.toml`, or pass `--workt
 Template fields for `status`: `.ID`, `.Project`, `.Task`, `.Lane`, `.State`, `.Created` (relative, such as `5 minutes ago`), `.CreatedAt` (a time), and `.Reason`.
 
 Template fields for `image ls`: `.Name`, `.Current` (true or false), `.Running`, `.Created` (the build date in the image name), `.Size` (such as `73 GB`), and `.SizeGB`.
+
+## Image build output
+
+`image build` and `image refresh` show numbered steps on stderr as they run: pull the base image, clone it, boot the VM, wait for guest SSH, configure the display, check auto-login and GUI, enable Xcode automation, run each `[image] setup` script, clean up the guest desktop, and seal the image. Stdout gets only the new image name, so `name=$(offscreen image build)` works.
+
+The global `--progress` flag, or `OFFSCREEN_PROGRESS` when the flag is not given, picks how steps are shown:
+
+| Mode | Output |
+| --- | --- |
+| `auto` (default) | `tty` when stderr is a terminal, else `plain`. |
+| `tty` | Steps redrawn in place with a spinner and timer. The running step shows its last few output lines; a finished step shrinks to one line with its duration. Falls back to `plain` when stderr is not a terminal or `TERM=dumb`, since it needs cursor movement. |
+| `plain` | One line per step start and end, and every output line prefixed with its step number, such as `[8/11] ...`. |
+| `quiet` | No progress; only the image name and errors. |
+| `json` | One JSON object per event. Field names may change before 1.0. |
+
+Color is off when `NO_COLOR` is set, `TERM=dumb`, or stderr is not a terminal. Tart has no supported progress output for `tart pull`, so the pull step shows only its timer; Tart's output goes to the build log.
+
+Every build writes its full log, including Tart's pull output and all guest command output, to `image-builds/offscreen-build-<id>.log` in the config file's directory (`~/Library/Application Support/offscreen/` by default, or beside `OFFSCREEN_CONFIG`). When a step fails, stderr shows that step's last 20 output lines, a one-line error, and the log path. Logs are kept after the build; delete old ones by hand.
 
 ## Prune
 
