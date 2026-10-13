@@ -38,9 +38,12 @@ type Result struct {
 
 // Options hold the host and guest streams for an execution.
 type Options struct {
-	ID             string // Daemon-assigned ID; empty for standalone callers.
-	Artifacts      string // Daemon-assigned directory; empty uses the default cache.
-	SkipLock       bool   // Daemon scheduler owns admission and project exclusion.
+	ID        string // Daemon-assigned ID; empty for standalone callers.
+	Artifacts string // Daemon-assigned directory; empty uses the default cache.
+	SkipLock  bool   // Daemon scheduler owns admission and project exclusion.
+	// Phase reports each job state: on the VM lane preparing (host
+	// prepare), cloning, booting, preparing (copy and guest setup), running
+	// and collecting; the host lane skips cloning and booting.
 	Phase          func(string)
 	Config         config.Config
 	Contract       project.Contract
@@ -155,6 +158,7 @@ func Execute(ctx context.Context, o Options) (result Result) {
 		}
 	}
 	client := tart.Client{}
+	phase("cloning")
 	if err := client.Clone(ctx, o.Config.CurrentImage, result.VM); err != nil {
 		fail(err)
 		return
@@ -188,6 +192,7 @@ func Execute(ctx context.Context, o Options) (result Result) {
 		}
 	}()
 	shares := []string{"worktree:" + spec.Root + ":ro", "artifacts:" + result.Artifacts, "cache:" + cache}
+	phase("booting")
 	vm, err = client.StartShared(bootCtx, result.VM, shares, o.Show)
 	if err != nil {
 		fail(err)
@@ -205,6 +210,8 @@ func Execute(ctx context.Context, o Options) (result Result) {
 		fail(fmt.Errorf("guest GUI not ready: %w", err))
 		return
 	}
+	// Copy the worktree and shares, then run guest setup.
+	phase("preparing")
 	if err := guest.Stream(ctx, sshClient, "mkdir -p "+guest.Quote(guestWork)+" "+guest.Quote(guestOut), nil, io.Discard, o.Stderr, false); err != nil {
 		fail(fmt.Errorf("create guest directories: %w", err))
 		return

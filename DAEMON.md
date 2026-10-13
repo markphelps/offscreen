@@ -70,7 +70,7 @@ What happens to a job that was in flight when the daemon stopped:
 | Queued, detached | Resumes after reloading its project contract. It sees any edits made to the contract since submission. |
 | Queued, detached, contract unreadable | `failed` (70) |
 | Queued, attached | `failed` (70). Its stdin attachment is gone, so it is not retried with empty input. |
-| Preparing / running / collecting | `failed` (70), orphaned. Its clone is cleaned up. Its age for expiry starts now. |
+| Preparing / cloning / booting / running / collecting | `failed` (70), orphaned. Its clone is cleaned up. Its age for expiry starts now. |
 | Retained `--keep` clone | Clone deleted by the sweep. |
 
 A `job-*` clone counts as owned only if it matches a recorded job, or its 16-hex-digit ID has a job directory. Other tools' `job-*` VMs are left alone.

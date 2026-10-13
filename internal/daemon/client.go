@@ -149,7 +149,22 @@ func (c Client) Input(ctx context.Context, id string, input io.Reader) {
 // Stream replays from byte zero and follows until terminal, retaining stdout and
 // stderr separately. A stream ending without a terminal status is a daemon error.
 func (c Client) Stream(ctx context.Context, id string, stdout, stderr io.Writer) (Job, error) {
-	resp, err := c.call(ctx, "GET", "/jobs/"+url.PathEscape(id)+"/stream", nil)
+	return c.stream(ctx, id, stdout, stderr, nil)
+}
+
+// StreamPhases is Stream that also asks the daemon for phase frames and passes
+// each one to phase, in order with the output. A nil phase is Stream. A daemon
+// from before phase frames ignores the request and sends output only.
+func (c Client) StreamPhases(ctx context.Context, id string, stdout, stderr io.Writer, phase func(Phase)) (Job, error) {
+	return c.stream(ctx, id, stdout, stderr, phase)
+}
+
+func (c Client) stream(ctx context.Context, id string, stdout, stderr io.Writer, phase func(Phase)) (Job, error) {
+	path := "/jobs/" + url.PathEscape(id) + "/stream"
+	if phase != nil {
+		path += "?" + PhasesParam + "=1"
+	}
+	resp, err := c.call(ctx, "GET", path, nil)
 	if err != nil {
 		return Job{}, err
 	}
@@ -162,11 +177,17 @@ func (c Client) Stream(ctx context.Context, id string, stdout, stderr io.Writer)
 		if err != nil {
 			return Job{}, fmt.Errorf("read job stream: %w", err)
 		}
-		switch kind {
-		case 'o':
+		switch {
+		case kind == FrameStdout:
 			_, err = stdout.Write(p)
-		case 'e':
+		case kind == FrameStderr:
 			_, err = stderr.Write(p)
+		case kind == FramePhase && phase != nil:
+			var event Phase
+			if err := json.Unmarshal(p, &event); err != nil {
+				return Job{}, fmt.Errorf("decode phase frame: %w", err)
+			}
+			phase(event)
 		default:
 			err = fmt.Errorf("invalid frame kind %q", kind)
 		}
@@ -209,7 +230,7 @@ func (c Client) Logs(ctx context.Context, id string, follow bool, stdout, stderr
 		if err != nil {
 			return err
 		}
-		if kind == 'o' {
+		if kind == FrameStdout {
 			_, err = stdout.Write(p)
 		} else {
 			_, err = stderr.Write(p)
