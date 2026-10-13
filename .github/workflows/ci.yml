@@ -13,9 +13,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v3
       - name: Lint
-        run: mise run lint
+        run: mise run lint:go
       - name: Unit tests
-        run: mise run test
+        run: mise run test:go
       # Guards the C04 fix: guardian subprocesses must keep coverage warnings out of task output.
       - name: Coverage-instrumented guardian tests
         run: go test ./internal/run -cover -count=1
@@ -32,7 +32,7 @@ jobs:
           install: false
       # Builds and runs the pure XCTest suite only: no bundle, install or launch.
       - name: Swift helper build and unit tests
-        run: mise run helper:test
+        run: mise run test:helper
 
   shellcheck:
     runs-on: macos-15
@@ -44,4 +44,4 @@ jobs:
         with:
           install_args: shellcheck
       - name: ShellCheck
-        run: mise run shellcheck
+        run: mise run lint:sh

@@ -1,64 +1,101 @@
 # offscreen
 
-Run Mac GUI tests and app checks in disposable Tart VMs instead of letting agents and scripts take over your desktop. A daemon queues jobs from multiple callers. Jobs that need actual Mac hardware can use a separate, idle-gated host lane.
+[![CI](https://github.com/markphelps/offscreen/actions/workflows/ci.yml/badge.svg)](https://github.com/markphelps/offscreen/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-## Quick start (build from source)
+**Run macOS UI tests in throwaway VMs, so your agents stop taking over your mouse.**
 
-You need an Apple silicon Mac, full Xcode selected as the developer directory, [Tart](https://tart.run/) on `PATH`, and Go 1.27 or newer. Check that `xcode-select -p` points to Xcode's `Contents/Developer` directory and that `xcodebuild -version` reports Xcode. The default guest image includes macOS and Xcode and may take time and disk space to download. You do **not** need mise or Homebrew to use offscreen.
+When a coding agent or script runs XCUITest on your Mac, it takes over the screen: windows pop up, focus jumps, and you can't type until it finishes. Offscreen sends those jobs to a fresh macOS VM instead. It queues work from any number of agents, terminals or scripts, and gives you back logs, screenshots and `.xcresult` bundles. For the few jobs that need real hardware, it waits until you've stepped away and lets you take the desktop back with one click.
+
+<!--
+  TODO demo GIF: replace this comment with
+  ![offscreen running a UI test in a VM while the desktop stays usable](docs/assets/demo.gif)
+
+  Shot list (about 15 seconds, looping, under 5 MB):
+  1. Split screen: terminal on the left, a text editor on the right with the cursor blinking.
+  2. Type `offscreen run hello test-ui` in examples/hello and press Enter.
+  3. While xcodebuild output streams, keep typing in the editor. Nothing steals focus.
+  4. Output ends with `job <id> artifacts <dir>`.
+  5. `open "$(offscreen artifacts <id>)"` shows Hello.xcresult (or run `launch` and show hello.png).
+-->
+
+## Quick start
+
+You need an Apple silicon Mac, full Xcode, [Tart](https://tart.run/), and Go 1.27+ or [mise](https://mise.jdx.dev/).
 
 ```sh
 git clone https://github.com/markphelps/offscreen.git
 cd offscreen
-go install ./cmd/offscreen ./cmd/offscreend
-offscreen_bin="$(go env GOBIN)"
-if [ -z "$offscreen_bin" ]; then offscreen_bin="$(go env GOPATH)/bin"; fi
-export PATH="$offscreen_bin:$PATH"
-offscreen image build
-offscreen daemon install
-# If macOS prompts, allow Offscreen Daemon access to the Local Network.
-# Check System Settings > Privacy & Security > Local Network before VM jobs.
+mise run install:go        # or without mise: scripts/install.sh
+                           # installs to ~/.local/bin and starts the daemon;
+                           # if macOS asks, allow "Offscreen Daemon" on the Local Network
+offscreen image build      # one-time: pulls a macOS + Xcode image, takes a while
+
 cd examples/hello
 offscreen run hello test-ui
 ```
 
-`go install` puts both executables in `$(go env GOPATH)/bin` (or `GOBIN`, if you set it). Add that directory to your shell's persistent `PATH` for later sessions. `daemon install` finds `offscreend` beside the `offscreen` executable, or on `PATH`, installs it in the signed user-owned `OffscreenDaemon.app` under the state directory, registers it with Launch Services, and starts a launchd agent. VM jobs need the daemon's Local Network permission to reach the Tart guest. If prompted, allow **Offscreen Daemon** in System Settings > Privacy & Security > Local Network before running Hello. If SSH repeatedly reports “no route to host,” check that setting and retry; the message can also indicate other routing problems. A grant is not established by the install command alone. It does not auto-start if you skip that step. To build into a local directory instead, from the repo root run `go build -o bin/offscreen ./cmd/offscreen` and `go build -o bin/offscreend ./cmd/offscreend`, then use `bin/offscreen` or add `bin` to `PATH`. Keep both binaries together before `daemon install`; reinstall the daemon after rebuilding it. `offscreen daemon uninstall` removes its LaunchAgent.
+The last command builds a small SwiftUI app on your Mac, runs its UI test inside a fresh VM, streams the output, and prints the job's artifact directory. Nothing opens on your desktop. If `offscreen` isn't found, add `~/.local/bin` to your `PATH`. For other problems, see the [install guide](docs/install.md).
 
-The Hello example builds its small macOS app on the host, then runs XCUITest in the guest. You can also run `offscreen run hello launch` to save a screenshot. A blocking run streams command output and ends with a job ID and artifact directory on stderr; the guest clone is normally deleted. See [the example](examples/hello/README.md) for the tasks and [the config reference](docs/config.md) for your own repo.
+## Use it in your repo
 
-A Homebrew cask is configured for `markphelps/homebrew-tap`, but **has not been published**. Once a release and the tap exist, `brew install --cask markphelps/tap/offscreen` will be an alternative to building from source. The cask is for the two Go binaries only; the native host helper is built and installed separately. The release binaries are unsigned and unnotarized; the locally installed daemon app uses ad-hoc signing only. The cask removes quarantine from the two staged binaries, which bypasses Gatekeeper's verification. Install only if you trust the source; signing and notarization are preferable.
+Add a `.offscreen.toml` at the repo root:
+
+```toml
+project = "myapp"
+
+[prepare]   # runs on your Mac before each job
+run = "xcodebuild -scheme MyApp -derivedDataPath .build build"
+share = [".build/Build/Products/Debug/MyApp.app"]
+
+[tasks.ui]  # runs inside the VM
+lane = "vm"
+run = "sh scripts/ui-test.sh"
+```
+
+Then tell your agent to run this instead of `xcodebuild test`:
+
+```sh
+offscreen run myapp ui
+offscreen run myapp -- swift test   # or any one-off command
+```
+
+`offscreen run` exits with the wrapped command's status, so agents and scripts read pass/fail the usual way. Offscreen's own failures use separate codes: 75 for a queue timeout, 70 for VM or daemon errors. Tasks write screenshots and results to `$OFFSCREEN_OUT`, and `offscreen artifacts <job>` prints where those ended up. The [config reference](docs/config.md) covers guest setup, caches and environment variables.
+
+## How it compares
+
+- **Running tests on your own desktop.** This works fine until a test opens a window while you're typing. Offscreen runs the same `xcodebuild` commands in a VM, so you keep working.
+- **Running Tart yourself.** Tart is the VM layer offscreen uses. Offscreen adds the parts you'd otherwise script by hand: a per-job clone of a golden image, copying the worktree and build products in, collecting artifacts, cleaning up afterwards, and a single queue for every caller, capped at Apple's limit of two macOS VMs.
+- **Hosted macOS CI** (GitHub Actions, Cirrus, and others). CI runs after you push. Offscreen runs locally whenever you or your agent call it, before you commit. It doesn't replace CI.
 
 ## Commands
-
-Run from a directory under a repo containing `.offscreen.toml`, or pass `--worktree` to point at one. The `<project>` argument must match the file's `project` key.
 
 | Command | What it does |
 | --- | --- |
 | `offscreen run <project> <task>` | Queue a named task, stream output, and wait for its result. |
-| `offscreen run <project> -- <cmd> [args...]` | Run an argv command directly; defaults to the VM lane. |
-| `offscreen status` | List queued, active, and completed jobs with lane, state, and waiting reason. |
-| `offscreen logs <job>` | Follow stdout/stderr while active; return after a completed job. `-f` also follows; `--no-follow` prints a snapshot. |
-| `offscreen artifacts <job>` | Print the job's artifact directory. |
-| `offscreen cancel <job>` | Cancel an active/queued job and wait for cleanup; also delete a retained `--keep` clone without changing its recorded result. |
-| `offscreen prune --older-than 720h --dry-run` / `--yes` | Preview, or delete, completed jobs (record, logs and artifacts) that finished longer ago than the given age. Queued, active and retained jobs are skipped. |
-| `offscreen pause` / `offscreen resume` | Pause/release the host lane; the manual pause survives daemon restarts. Resume also clears a **Not now** delay. |
-| `offscreen image build` / `offscreen image refresh` | Build a golden image; refresh pulls the base image again before rebuilding. |
-| `offscreen daemon install` / `offscreen daemon uninstall` | Register/start or stop/remove the user's daemon LaunchAgent. |
+| `offscreen run <project> -- <cmd>` | Run a one-off command in a VM. |
+| `offscreen status` | List queued, active, and completed jobs. |
+| `offscreen logs <job>` | Follow a job's output. |
+| `offscreen artifacts <job>` | Print a job's artifact directory. |
+| `offscreen cancel <job>` | Cancel a job and wait for cleanup. |
 
-`run` accepts `--lane vm|host|auto` (default `auto`: named task's lane, direct command uses VM), `--timeout 1m` (limits waiting and running; default none), `--worktree /path/to/worktree`, `--detach` (print ID and return; stdin is closed), and `--keep` (retain a failed VM clone for inspection). A kept clone **holds its VM slot and any exclusive-project lease** until `offscreen cancel <job>` deletes it. Run `offscreen --help` or `offscreen run --help` for flag syntax. `--log-level` or `OFFSCREEN_LOG_LEVEL` selects debug, info, warn, or error logs on stderr.
+Useful `run` flags: `--detach` returns right away, `--keep` keeps a failed VM for inspection, and `--timeout` limits how long a job can wait and run. See the [command reference](docs/cli.md) for all commands, flags, and exit codes.
 
-| Exit status | Meaning |
-| --- | --- |
-| Wrapped command's code | The command ran, including a nonzero test failure. |
-| `75` | Queue deadline expired before execution. |
-| `70` | Runner, daemon, VM, preparation, or cleanup failed (also a lost attached stdin after daemon restart). |
-| `1` | CLI usage, config, or other client-side error. |
+## Jobs that need real hardware
 
-## Lanes and safety
+Some checks can't run in a VM. A task with `lane = "host"` runs on your actual desktop, one job at a time, and only when you're idle: the screen must be unlocked and awake, the camera and microphone off, and you away for long enough. A countdown lets you say **Not now** first. If you come back mid-job, a notification lets you take the desktop back. This lane needs a separate [menu bar helper](helper/README.md), and automatic return detection stays off until you check it on your Mac. Read [lanes and safety](docs/lanes.md) before turning it on.
 
-The VM lane clones the current golden image for each job, copies the worktree and selected prepared files to the guest, and collects `$OFFSCREEN_OUT`. It runs headless and needs no host helper. By default, up to two VM jobs can run at once, reduced to one when memory is low. Apple's macOS virtualization license limits a host to **two macOS guests**; do not raise `vm_slots` beyond that. Use `exclusive = true` in a project contract to serialize its jobs. On daemon restart, orphaned running jobs fail and owned stale VMs are cleaned up. Queued attached runs cannot replay stdin after restart; detach jobs when retries must be safe.
+## Learn more
 
-The host lane runs one task at a time on your real desktop, only after the configured idle threshold and checks for an unlocked, awake session, idle camera and microphone, and an unpaused lane. It requires the separately installed [menu bar helper](helper/README.md) with Input Monitoring and Notifications. It does **not** require Accessibility permission for the helper (an external input-injection tool may require its own). An automatic, nonactivating ten-second countdown offers **Not now** (30-minute durable delay). If the user returns during a job, a notification offers **Take back now**; the default grace period is 60 seconds. Take back cancels the process group and requeues the job at the front only after cleanup. A same-executable guardian sends TERM/KILL and reaps background descendants on normal exit, cancellation, or daemon death. A retried job has closed stdin; use detached host jobs when interruption is possible.
+- [Install guide](docs/install.md): requirements, permissions, and the unpublished Homebrew cask
+- [Configuration](docs/config.md): project contract and user config
+- [Command reference](docs/cli.md): every command, flag, and exit code
+- [Lanes and safety](docs/lanes.md): how the VM and host lanes isolate work
+- [Daemon operation](DAEMON.md): state, restarts, and cleanup
+- [Architecture](ARCHITECTURE.md): components, job lifecycle, and invariants
+- [Hello example](examples/hello/README.md): the sample app and its tasks
+- [Contributing](CONTRIBUTING.md): developer checks and local end-to-end testing
 
-**Automatic physical-input return detection is off by default.** The helper's `pid == 0` event filter is a candidate until a physical-versus-injected probe confirms it on *your* Mac. Follow [the probe and manual-return instructions](helper/README.md) before trusting the host lane with hardware-sensitive work. The helper's permission request or successful build alone is not proof. If a host guardian crashes, a `host-group-*.json` marker blocks daemon restart. Inspect and resolve the process group yourself before removing that marker; offscreen does not kill a PID just because it appears in an old marker. The VM lane is independent of this helper.
+## License
 
-See [daemon operation](DAEMON.md) for state isolation, restart behavior, and cleanup details. See [contributing](CONTRIBUTING.md) for developer checks and local end-to-end testing.
+[MIT](LICENSE)
