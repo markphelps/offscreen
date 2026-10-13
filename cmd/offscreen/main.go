@@ -27,7 +27,7 @@ import (
 
 type CLI struct {
 	LogLevel  string       `help:"Log level (debug, info, warn, error)." env:"OFFSCREEN_LOG_LEVEL" default:"info"`
-	Progress  string       `help:"Progress output for image build and refresh: auto, tty, plain, quiet or json. Defaults to OFFSCREEN_PROGRESS, else auto." placeholder:"MODE"`
+	Progress  string       `help:"Progress output for image build, image refresh and run phases: auto, tty, plain, quiet or json. Defaults to OFFSCREEN_PROGRESS, else auto." placeholder:"MODE"`
 	Run       RunCmd       `cmd:"" help:"Run a project task or command."`
 	Status    StatusCmd    `cmd:"" help:"List queued and active jobs; -a includes completed ones."`
 	Logs      LogsCmd      `cmd:"" help:"Print or follow job output."`
@@ -51,7 +51,7 @@ type RunCmd struct {
 	Direct   bool          `kong:"-"`
 }
 
-func (c *RunCmd) Run() (runErr error) {
+func (c *RunCmd) Run(setting progressSetting) (runErr error) {
 	if len(c.Args) == 0 {
 		return fmt.Errorf("run: supply a task or -- followed by a command")
 	}
@@ -65,6 +65,12 @@ func (c *RunCmd) Run() (runErr error) {
 	client, err := daemon.Dial()
 	if err != nil {
 		return err
+	}
+	var display *phaseDisplay
+	if !c.Detach {
+		if display, err = newPhaseDisplay(setting, os.Stderr, progress.Options{}); err != nil {
+			return err
+		}
 	}
 	req := daemon.Request{Root: contract.Root, Project: c.Project, Lane: project.Lane(c.Lane), Timeout: c.Timeout, Keep: c.Keep, Show: c.Show, Detach: c.Detach, HostEnv: hostEnvironment(os.Environ())}
 	if c.Direct {
@@ -98,7 +104,7 @@ func (c *RunCmd) Run() (runErr error) {
 		}
 	}()
 	go client.Input(ctx, job.ID, os.Stdin)
-	finished, streamErr := client.Stream(ctx, job.ID, os.Stdout, os.Stderr)
+	finished, streamErr := streamRun(ctx, client, job.ID, display, os.Stdout, os.Stderr)
 	if ctx.Err() != nil || streamErr != nil {
 		// The server gives cleanup 130 seconds. A shorter client deadline
 		// would report completion while the clone is still being destroyed.

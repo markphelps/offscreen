@@ -42,8 +42,27 @@ type worker struct {
 	retained        bool
 	retainedCleanup chan struct{}
 	requeueReason   string
-	mu              sync.Mutex
+	// mu guards log writes and the fields below. written is the size of
+	// stream.bin. phases holds the latest state changes, each with the
+	// stream.bin size when it happened, so streams that ask for phase frames
+	// interleave them with output in order. Phases live only in memory and
+	// never reach stream.bin, so logs never replays them.
+	mu        sync.Mutex
+	written   int64
+	phases    []phaseMark
+	nextPhase int
 }
+
+// phaseMark is one state change at stream.bin offset, numbered by seq.
+type phaseMark struct {
+	seq    int
+	offset int64
+	phase  Phase
+}
+
+// maxPhases bounds the phases a worker keeps; a stream that falls this far
+// behind skips the oldest. A long host-lane queue can change reason often.
+const maxPhases = 64
 
 func (w *worker) write(kind byte, p []byte) (int, error) {
 	w.mu.Lock()
@@ -51,7 +70,42 @@ func (w *worker) write(kind byte, p []byte) (int, error) {
 	if err := WriteFrame(w.log, kind, p); err != nil {
 		return 0, err
 	}
+	w.written += int64(5 + len(p))
 	return len(p), nil
+}
+
+// recordPhase notes a non-terminal state change for opted-in streams. A job
+// admitted at once never changes to "queued", so its first phase is a
+// reasonless "queued" from submission; a blocked job's first phase is
+// "queued" with the admission reason.
+func (w *worker) recordPhase(job Job) {
+	if Terminal(job.State) {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.nextPhase == 0 && job.State != "queued" {
+		w.phases = append(w.phases, phaseMark{seq: w.nextPhase, offset: w.written, phase: Phase{State: "queued", Time: job.Created}})
+		w.nextPhase++
+	}
+	w.phases = append(w.phases, phaseMark{seq: w.nextPhase, offset: w.written, phase: Phase{State: job.State, Reason: job.Reason, Time: job.Updated}})
+	w.nextPhase++
+	if len(w.phases) > maxPhases {
+		w.phases = slices.Delete(w.phases, 0, len(w.phases)-maxPhases)
+	}
+}
+
+// phasesSince returns the phases numbered from seq and the stream.bin size
+// they were recorded against. A reader that stops at that size and then
+// sends phases whose offset it has reached keeps both in order.
+func (w *worker) phasesSince(seq int) ([]phaseMark, int64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	i := 0
+	for i < len(w.phases) && w.phases[i].seq < seq {
+		i++
+	}
+	return slices.Clone(w.phases[i:]), w.written
 }
 
 type streamWriter struct {
@@ -235,6 +289,7 @@ func (s *Server) transition(w *worker, state, reason string, code int) error {
 		return s.failLocked(fmt.Errorf("persist job %s transition to %s: %w", w.job.ID, state, err))
 	}
 	w.job = candidate
+	w.recordPhase(candidate)
 	if Terminal(state) {
 		// Executors receive their own Request copy, so dropping this reference
 		// never mutates a map an active executor may still read.
@@ -749,6 +804,12 @@ func (s *Server) execute(ctx context.Context, w *worker, req Request) {
 		s.mu.Unlock()
 		return
 	}
+	// A requeued job appends to the earlier attempt's stream.bin.
+	if info, err := log.Stat(); err == nil {
+		w.mu.Lock()
+		w.written = info.Size()
+		w.mu.Unlock()
+	}
 	w.log = log
 	defer func() { _ = log.Close() }()
 	var input io.Reader = strings.NewReader("")
@@ -1075,6 +1136,9 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		bad(w, 404, errors.New("unknown job"))
 		return
 	}
+	// Only clients that ask get phase frames; older clients reject any frame
+	// kind other than stdout and stderr.
+	phases := r.URL.Query().Get(PhasesParam) == "1"
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	flusher, ok := w.(http.Flusher)
@@ -1086,6 +1150,22 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	path := filepath.Join(job.job.Artifacts, "stream.bin")
 	s.mu.Unlock()
 	offset := int64(0)
+	nextPhase := 0
+	// sendPhases writes pending phases recorded at or before offset, so a
+	// phase never overtakes output written before it.
+	var pending []phaseMark
+	sendPhases := func() bool {
+		for len(pending) > 0 && pending[0].offset <= offset {
+			b, err := json.Marshal(pending[0].phase)
+			if err != nil || WriteFrame(w, FramePhase, b) != nil {
+				return false
+			}
+			nextPhase = pending[0].seq + 1
+			pending = pending[1:]
+			flusher.Flush()
+		}
+		return true
+	}
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -1102,10 +1182,20 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 			default:
 			}
 		}
+		// Without phases, read to EOF. With phases, stop at the size the
+		// phases were recorded against; later frames wait for the next scan.
+		limit := int64(-1)
+		if phases {
+			pending, limit = job.phasesSince(nextPhase)
+		}
 		f, err := os.Open(path)
 		if err == nil {
 			_, _ = f.Seek(offset, io.SeekStart)
-			for {
+			for limit < 0 || offset < limit {
+				if !sendPhases() {
+					_ = f.Close()
+					return
+				}
 				kind, p, e := ReadFrame(f)
 				if e != nil {
 					break
@@ -1118,6 +1208,9 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 				flusher.Flush()
 			}
 			_ = f.Close()
+		}
+		if !sendPhases() {
+			return
 		}
 		if complete {
 			return
