@@ -195,6 +195,13 @@ func Build(ctx context.Context, path string, refresh bool) (string, error) {
 	if err := waitVM(); err != nil {
 		return "", fmt.Errorf("VM exited: %w", err)
 	}
+	// Hold the image lock from rename until current_image names the new image,
+	// so a concurrent image prune never mistakes it for an old one.
+	unlock, err := lockImages(path)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	if err := client.Rename(ctx, working, name); err != nil {
 		return "", err
 	}

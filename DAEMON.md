@@ -168,6 +168,6 @@ flowchart TD
 
 - Both use the same engine and never overlap. A failed delete never rewrites a job's completion time, and never stops the daemon.
 - A cancelled `--keep` job keeps its original completion time.
-- Never touched: per-project caches, golden images, VMs, and anything outside a job's own directory. Symlinks inside a job directory are removed, not followed.
+- Never touched: per-project caches, golden images (use `offscreen image prune`), VMs, and anything outside a job's own directory. Symlinks inside a job directory are removed, not followed.
 - Freed SQLite pages are reused, so the database stays near its high-water size. It never shrinks (there is no routine `VACUUM`), and old pages, the journal and backups can still hold deleted data.
 - Expiry runs only while the daemon is up. Old history from a long-stopped daemon is removed at its next startup.

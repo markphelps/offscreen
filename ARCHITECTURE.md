@@ -39,7 +39,7 @@ flowchart LR
     helper -- "snapshots, Not now,<br/>Take back" --> daemon
 ```
 
-`offscreen image build` runs in the CLI, not the daemon. It clones the base image with Tart, checks the guest's GUI session, and records the result as `current_image` in the user config.
+`offscreen image build` runs in the CLI, not the daemon. It clones the base image with Tart, checks the guest's GUI session, and records the result as `current_image` in the user config. Older images stay in Tart until `offscreen image prune` deletes them. It only selects names `image build` produces, always keeps `current_image` (and refuses if Tart doesn't list it), skips running images, and refuses `--yes` while a VM job is past the queue (it proceeds if the daemon is not running). A lock file beside the config serializes prune against `image build` publishing a new image.
 
 ## Job lifecycle (VM lane)
 
