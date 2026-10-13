@@ -74,7 +74,7 @@ offscreen run myapp -- swift test   # or any one-off command
 | --- | --- |
 | `offscreen run <project> <task>` | Queue a named task, stream output, and wait for its result. |
 | `offscreen run <project> -- <cmd>` | Run a one-off command in a VM. |
-| `offscreen status` | List queued, active, and completed jobs. |
+| `offscreen status` | List queued and active jobs; `-a` adds completed ones. |
 | `offscreen logs <job>` | Follow a job's output. |
 | `offscreen artifacts <job>` | Print a job's artifact directory. |
 | `offscreen cancel <job>` | Cancel a job and wait for cleanup. |
