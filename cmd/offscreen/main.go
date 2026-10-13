@@ -28,7 +28,7 @@ import (
 type CLI struct {
 	LogLevel  string       `help:"Log level (debug, info, warn, error)." env:"OFFSCREEN_LOG_LEVEL" default:"info"`
 	Run       RunCmd       `cmd:"" help:"Run a project task or command."`
-	Status    StatusCmd    `cmd:"" help:"Show jobs including terminal records."`
+	Status    StatusCmd    `cmd:"" help:"List queued and active jobs; -a includes completed ones."`
 	Logs      LogsCmd      `cmd:"" help:"Print or follow job output."`
 	Artifacts ArtifactsCmd `cmd:"" help:"Print a job's artifact directory."`
 	Cancel    CancelCmd    `cmd:"" help:"Cancel a job."`
@@ -141,23 +141,6 @@ type runExit int
 func (e runExit) Error() string { return fmt.Sprintf("job exited %d", e) }
 
 type runFailure struct{ error }
-
-type StatusCmd struct{}
-
-func (*StatusCmd) Run() error {
-	client, err := daemon.Dial()
-	if err != nil {
-		return err
-	}
-	jobs, err := client.Jobs(context.Background())
-	if err != nil {
-		return err
-	}
-	for _, j := range jobs {
-		_, _ = fmt.Fprintf(os.Stdout, "%s  %s  %s  %s  %s  %s\n", j.ID, j.Project, j.Task, j.Lane, j.State, j.Reason)
-	}
-	return nil
-}
 
 type LogsCmd struct {
 	Job    string `arg:"" help:"Job ID."`
@@ -300,6 +283,7 @@ func (*DaemonUninstallCmd) Run() error { return daemon.Uninstall() }
 type ImageCmd struct {
 	Build   ImageBuildCmd   `cmd:"" help:"Build a new golden image."`
 	Refresh ImageRefreshCmd `cmd:"" help:"Rebuild the image after an update."`
+	Ls      ImageLsCmd      `cmd:"" help:"List golden images and mark current_image."`
 	Prune   ImagePruneCmd   `cmd:"" help:"Preview or delete golden images other than current_image."`
 }
 type ImageBuildCmd struct{}
