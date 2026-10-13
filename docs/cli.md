@@ -6,15 +6,32 @@ Run from a directory under a repo containing `.offscreen.toml`, or pass `--workt
 | --- | --- |
 | `offscreen run <project> <task>` | Queue a named task, stream output, and wait for its result. |
 | `offscreen run <project> -- <cmd> [args...]` | Run an argv command directly; defaults to the VM lane. |
-| `offscreen status` | List queued, active, and completed jobs with lane, state, and waiting reason. |
+| `offscreen status` | List queued and active jobs, newest first, with lane, state, age, and waiting reason. `-a` also lists completed jobs. |
 | `offscreen logs <job>` | Follow stdout/stderr while active; return after a completed job. `-f` also follows; `--no-follow` prints a snapshot. |
 | `offscreen artifacts <job>` | Print the job's artifact directory. |
 | `offscreen cancel <job>` | Cancel an active/queued job and wait for cleanup; also delete a retained `--keep` clone without changing its recorded result. |
 | `offscreen prune --older-than 720h --dry-run` / `--yes` | Preview, or delete, completed jobs (record, logs and artifacts) that finished longer ago than the given age. Queued, active and retained jobs are skipped. |
 | `offscreen pause` / `offscreen resume` | Pause/release the host lane; the manual pause survives daemon restarts. Resume also clears a **Not now** delay. |
 | `offscreen image build` / `offscreen image refresh` | Build a golden image; refresh pulls the base image again before rebuilding. |
+| `offscreen image ls` | List golden images, newest first, with build date and size. `*` in the CURRENT column marks `current_image`. |
 | `offscreen image prune --dry-run` / `--yes` | Preview, or delete, golden images other than `current_image`. Only names `image build` produces are selected; running images are skipped. Refuses if `current_image` is missing from Tart, or (with `--yes`) while a VM job is active. |
 | `offscreen daemon install` / `offscreen daemon uninstall` | Register/start or stop/remove the user's daemon LaunchAgent. |
+
+## List output
+
+`status` and `image ls` print an aligned table with a header row on stdout. Both take the same output flags:
+
+| Flag | Meaning |
+| --- | --- |
+| `-q`, `--quiet` | Print only job IDs (`status`) or image names (`image ls`), one per line. Overrides `--format`. |
+| `--format table` | The default table. |
+| `--format json` | One JSON object per row, one per line. Field names may change before 1.0. |
+| `--format '<template>'` | A Go [text/template](https://pkg.go.dev/text/template) applied to each row, for example `'{{.ID}} {{.State}}'`. |
+| `--format 'table <template>'` | A table with headers built from the template, for example `'table {{.ID}}\t{{.State}}'`. `\t` and `\n` are expanded. |
+
+Template fields for `status`: `.ID`, `.Project`, `.Task`, `.Lane`, `.State`, `.Created` (relative, such as `5 minutes ago`), `.CreatedAt` (a time), and `.Reason`.
+
+Template fields for `image ls`: `.Name`, `.Current` (true or false), `.Running`, `.Created` (the build date in the image name), `.Size` (such as `73 GB`), and `.SizeGB`.
 
 ## `run` flags
 

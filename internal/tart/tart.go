@@ -13,6 +13,8 @@ import (
 type VM struct {
 	Name    string `json:"Name"`
 	Running bool   `json:"Running"`
+	// Size is the disk space the VM uses on the host, in gigabytes.
+	Size int `json:"Size"`
 }
 
 type Client struct {
