@@ -173,6 +173,9 @@ func (r *plainRenderer) Emit(e Event) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	at := eventTime(e, r.now)
+	// Plain output may still reach a terminal (TERM=dumb), so command
+	// output must not carry escape sequences or control characters.
+	e.Title, e.Line, e.Phase, e.Reason = Sanitize(e.Title), Sanitize(e.Line), Sanitize(e.Phase), Sanitize(e.Reason)
 	switch e.Kind {
 	case KindStepStart:
 		r.starts[e.Step] = at
@@ -199,7 +202,7 @@ func (r *plainRenderer) Emit(e Event) {
 	case KindStepDone:
 		fmt.Fprintf(r.w, "%s DONE %s\n", label(e.Step, e.Total), formatDuration(at.Sub(r.start(e.Step, at))))
 	case KindStepFailed:
-		fmt.Fprintf(r.w, "%s ERROR %s: %v\n", label(e.Step, e.Total), formatDuration(at.Sub(r.start(e.Step, at))), e.Err)
+		fmt.Fprintf(r.w, "%s ERROR %s: %s\n", label(e.Step, e.Total), formatDuration(at.Sub(r.start(e.Step, at))), errText(e.Err))
 	case KindPhase:
 		r.endPhase(at)
 		r.phase, r.phaseAt = e.Phase, at
@@ -299,4 +302,12 @@ func eventTime(e Event, now func() time.Time) time.Time {
 		return now()
 	}
 	return e.Time
+}
+
+// errText returns err's message without escape sequences, or "<nil>".
+func errText(err error) string {
+	if err == nil {
+		return "<nil>"
+	}
+	return Sanitize(err.Error())
 }
