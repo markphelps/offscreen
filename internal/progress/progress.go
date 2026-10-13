@@ -41,7 +41,8 @@ type Event struct {
 	// Time is when the event happened. Renderers use their own clock when
 	// it is zero.
 	Time time.Time
-	// Step is the 1-based step number for step events.
+	// Step is the 1-based step number for step events. A KindOutput event
+	// with Step 0 is output of the current phase.
 	Step int
 	// Total is the number of steps expected, or 0 when unknown.
 	Total int

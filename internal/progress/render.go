@@ -178,6 +178,11 @@ func (r *plainRenderer) Emit(e Event) {
 		r.starts[e.Step] = at
 		fmt.Fprintf(r.w, "%s %s\n", label(e.Step, e.Total), e.Title)
 	case KindOutput:
+		if e.Step == 0 {
+			// Output during a phase rather than a numbered step.
+			fmt.Fprintf(r.w, "[%s] %s\n", r.phase, e.Line)
+			return
+		}
 		fmt.Fprintf(r.w, "%s %s\n", label(e.Step, e.Total), e.Line)
 	case KindProgress:
 		// Print only when the percentage reaches a new tenth, so a log does
