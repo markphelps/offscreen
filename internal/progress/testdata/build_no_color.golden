@@ -1,0 +1,47 @@
+⠋ [1/3] Pull base image  0.0s
+\e[1A\e[J⠋ [1/3] Pull base image  0.0s  0%
+\e[1A\e[J⠴ [1/3] Pull base image  0.5s  25%
+\e[1A\e[J⠴ [1/3] Pull base image  0.5s  30%
+\e[1A\e[J⠋ [1/3] Pull base image  1.0s  100%
+\e[1A\e[J✔ [1/3] Pull base image  1.0s
+⠋ [2/3] Clone VM  0.0s
+\e[1A\e[J⠋ [2/3] Clone VM  0.0s
+    cloning
+\e[2A\e[J⠸ [2/3] Clone VM  0.3s
+    cloning
+    almost there
+\e[3A\e[J✔ [2/3] Clone VM  0.3s
+⠋ [3/3] Run setup script setup.sh  0.0s
+\e[1A\e[J⠋ [3/3] Run setup script setup.sh  0.0s
+    one
+\e[2A\e[J⠙ [3/3] Run setup script setup.sh  0.1s
+    one
+    two
+\e[3A\e[J⠹ [3/3] Run setup script setup.sh  0.2s
+    one
+    two
+    three
+\e[4A\e[J⠸ [3/3] Run setup script setup.sh  0.3s
+    one
+    two
+    three
+    four
+\e[5A\e[J⠼ [3/3] Run setup script setup.sh  0.4s
+    one
+    two
+    three
+    four
+    five
+\e[6A\e[J⠴ [3/3] Run setup script setup.sh  0.5s
+    two
+    three
+    four
+    five
+    six
+\e[6A\e[J⠦ [3/3] Run setup script setup.sh  0.6s
+    three
+    four
+    five
+    six
+    partial
+\e[6A\e[J✘ [3/3] Run setup script setup.sh  ERROR 0.6s: exit status 1
