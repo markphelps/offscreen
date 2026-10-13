@@ -300,6 +300,7 @@ func (*DaemonUninstallCmd) Run() error { return daemon.Uninstall() }
 type ImageCmd struct {
 	Build   ImageBuildCmd   `cmd:"" help:"Build a new golden image."`
 	Refresh ImageRefreshCmd `cmd:"" help:"Rebuild the image after an update."`
+	Prune   ImagePruneCmd   `cmd:"" help:"Preview or delete golden images other than current_image."`
 }
 type ImageBuildCmd struct{}
 
@@ -308,6 +309,95 @@ func (*ImageBuildCmd) Run() error { return buildImage(false) }
 type ImageRefreshCmd struct{}
 
 func (*ImageRefreshCmd) Run() error { return buildImage(true) }
+
+type ImagePruneCmd struct {
+	DryRun bool `help:"List what would be deleted without changing anything."`
+	Yes    bool `help:"Delete the selected images."`
+}
+
+func (c *ImagePruneCmd) Validate() error {
+	if c.DryRun == c.Yes {
+		return errors.New("choose exactly one of --dry-run (preview) or --yes (delete)")
+	}
+	return nil
+}
+
+func (c *ImagePruneCmd) Run() error {
+	path, err := config.Path()
+	if err != nil {
+		return err
+	}
+	guard := func(ctx context.Context) error {
+		client, err := daemon.Dial()
+		if err != nil {
+			return err
+		}
+		return requireNoActiveVMJobs(ctx, client.Jobs)
+	}
+	report, err := image.Prune(context.Background(), path, c.Yes, guard)
+	if err != nil {
+		return err
+	}
+	return printImagePrune(report, os.Stdout, os.Stderr)
+}
+
+// requireNoActiveVMJobs refuses to delete images while a started VM job may
+// still clone the image it read before a rebuild. Queued jobs read
+// current_image when they start, so they are safe. A stopped daemon has no jobs.
+func requireNoActiveVMJobs(ctx context.Context, list func(context.Context) ([]daemon.Job, error)) error {
+	jobs, err := list(ctx)
+	if errors.Is(err, daemon.ErrUnavailable) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("check active jobs before deleting images: %w", err)
+	}
+	if ids := activeVMJobs(jobs); len(ids) > 0 {
+		return fmt.Errorf("image prune: VM job(s) %s still active; rerun when they finish", strings.Join(ids, ", "))
+	}
+	return nil
+}
+
+func activeVMJobs(jobs []daemon.Job) []string {
+	var ids []string
+	for _, job := range jobs {
+		if job.Lane == project.LaneVM && job.State != "queued" && !daemon.Terminal(job.State) {
+			ids = append(ids, job.ID)
+		}
+	}
+	return ids
+}
+
+// printImagePrune prints selected, skipped and deleted images on stdout and
+// per-image failures on stderr.
+func printImagePrune(report image.PruneReport, stdout, stderr io.Writer) error {
+	_, _ = fmt.Fprintf(stdout, "current  %s  (kept)\n", report.Current)
+	if report.Apply {
+		for _, e := range report.Deleted {
+			_, _ = fmt.Fprintf(stdout, "deleted  %s\n", e.Name)
+		}
+	} else {
+		for _, e := range report.Eligible {
+			_, _ = fmt.Fprintf(stdout, "would-delete  %s\n", e.Name)
+		}
+	}
+	for _, e := range report.Skipped {
+		_, _ = fmt.Fprintf(stdout, "skipped  %s  %s\n", e.Name, e.Reason)
+	}
+	for _, e := range report.Failed {
+		_, _ = fmt.Fprintf(stderr, "image prune: %s: %s\n", e.Name, e.Reason)
+	}
+	if report.Apply {
+		_, _ = fmt.Fprintf(stdout, "summary  deleted %d, failed %d, skipped %d\n", len(report.Deleted), len(report.Failed), len(report.Skipped))
+	} else {
+		_, _ = fmt.Fprintf(stdout, "summary  dry run: would delete %d, skipped %d; nothing changed\n", len(report.Eligible), len(report.Skipped))
+	}
+	if len(report.Failed) > 0 {
+		return fmt.Errorf("image prune: %d image(s) not deleted; rerun offscreen image prune --yes to retry", len(report.Failed))
+	}
+	return nil
+}
+
 func buildImage(refresh bool) error {
 	path, err := config.Path()
 	if err != nil {
