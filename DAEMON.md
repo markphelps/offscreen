@@ -161,8 +161,8 @@ flowchart TD
 | | Automatic expiry | `offscreen prune` |
 | --- | --- | --- |
 | Cutoff | `job_retention` (default `168h`), read at startup | `--older-than <duration>`, positive |
-| When | Once at startup before serving, then hourly | On demand; `--dry-run` previews, `--yes` applies, no prompt |
-| Output | Counts on stderr (info at startup or after a deletion, otherwise debug) | stdout: cutoff, each `would-delete`/`deleted`/`skipped` job, summary |
+| When | Once at startup before serving, then hourly | On demand; asks `[y/N]` on a terminal, `-f` skips the prompt, `--dry-run` previews |
+| Output | Counts on stderr (info at startup or after a deletion, otherwise debug) | stdout: cutoff, each `would-delete`/`deleted`/`skipped` job, summary; the selection and prompt go to stderr |
 | A deletion fails | Logged at warn; retried next pass | Reported on stderr, exits nonzero; rerun to retry |
 | Tart can't be listed | Pass deletes nothing, logs an error | Deletes nothing, exits nonzero |
 
