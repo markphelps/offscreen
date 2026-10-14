@@ -152,7 +152,7 @@ type runFailure struct{ error }
 
 type LogsCmd struct {
 	Job    string `arg:"" help:"Job ID."`
-	Follow bool   `help:"Follow output as it arrives; --no-follow prints a snapshot." short:"f" default:"true" negatable:""`
+	Follow bool   `help:"Keep printing output until the job ends. Without it, print the output so far and exit." short:"f" negatable:""`
 }
 
 func (c *LogsCmd) Run() error {

@@ -54,7 +54,7 @@ xcrun xcresulttool get test-results summary --path "$(offscreen artifacts <job>)
 ```sh
 offscreen run <project> <task> --detach   # prints the job ID and returns
 offscreen status                          # queued and active jobs; -a adds finished ones
-offscreen logs <job>                      # follows output until the job ends
+offscreen logs <job>                      # output so far; -f follows until the job ends
 offscreen cancel <job>                    # cancels and waits for cleanup
 ```
 

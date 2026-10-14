@@ -7,7 +7,7 @@ Run from a directory under a repo containing `.offscreen.toml`, or pass `--workt
 | `offscreen run <project> <task>` | Queue a named task, stream output, and wait for its result. |
 | `offscreen run <project> -- <cmd> [args...]` | Run an argv command directly; defaults to the VM lane. |
 | `offscreen status` | List queued and active jobs, newest first, with lane, state, age, and waiting reason. Failed `--keep` jobs whose clone is still retained are listed too, as `failed (retained)`, until cancelled. `-a` also lists completed jobs. |
-| `offscreen logs <job>` | Follow stdout/stderr while active; return after a completed job. `-f` also follows; `--no-follow` prints a snapshot. |
+| `offscreen logs <job>` | Print the job's stdout/stderr so far and exit. `-f`/`--follow` keeps printing until the job ends. |
 | `offscreen artifacts <job>` | Print the job's artifact directory. |
 | `offscreen cancel <job>` | Cancel an active/queued job and wait for cleanup; also delete a retained `--keep` clone without changing its recorded result. |
 | `offscreen prune --older-than 720h` | Delete completed jobs (record, logs and artifacts) that finished longer ago than the given age. Queued, active and retained jobs are skipped. Asks first; see [Prune](#prune). |

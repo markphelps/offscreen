@@ -113,12 +113,12 @@ func TestCommandsAreAvailable(t *testing.T) {
 	}
 }
 
-func TestLogsFollowsByDefaultAndSupportsSnapshot(t *testing.T) {
+func TestLogsPrintsSnapshotByDefaultAndFollowsOnRequest(t *testing.T) {
 	for _, tc := range []struct {
 		args   []string
 		follow bool
 	}{
-		{[]string{"logs", "job-1"}, true},
+		{[]string{"logs", "job-1"}, false},
 		{[]string{"logs", "job-1", "-f"}, true},
 		{[]string{"logs", "job-1", "--follow"}, true},
 		{[]string{"logs", "job-1", "--no-follow"}, false},
