@@ -8,7 +8,7 @@
 [![CI](https://github.com/markphelps/offscreen/actions/workflows/ci.yml/badge.svg)](https://github.com/markphelps/offscreen/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Run macOS UI tests in throwaway VMs, so your agents stop taking over your mouse.**
+**Run macOS UI tests in throwaway VMs, so your agents stop taking over your screen.**
 
 When a coding agent or script runs XCUITest on your Mac, it takes over the screen: windows pop up, focus jumps, and you can't type until it finishes. Offscreen sends those jobs to a fresh macOS VM instead. It queues work from any number of agents, terminals or scripts, and gives you back logs, screenshots and `.xcresult` bundles. For the few jobs that need real hardware, it waits until you've stepped away and lets you take the desktop back with one click.
 
@@ -34,7 +34,7 @@ cd offscreen
 mise run install:go        # or without mise: scripts/install.sh
                            # installs to ~/.local/bin and starts the daemon;
                            # if macOS asks, allow "Offscreen Daemon" on the Local Network
-offscreen image build      # one-time: pulls a macOS + Xcode image, takes a while
+offscreen image build      # one-time: pulls a macOS + Xcode image, takes a while, go grab lunch
 
 cd examples/hello
 offscreen run hello test-ui
