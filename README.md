@@ -10,7 +10,10 @@
 
 **Run macOS UI tests in throwaway VMs, so your agents stop taking over your screen.**
 
-When a coding agent or script runs XCUITest on your Mac, it takes over the screen: windows pop up, focus jumps, and you can't type until it finishes. Offscreen sends those jobs to a fresh macOS VM instead. It queues work from any number of agents, terminals or scripts, and gives you back logs, screenshots and `.xcresult` bundles. For the few jobs that need real hardware, it waits until you've stepped away and lets you take the desktop back with one click.
+When a coding agent or script runs XCUITest on your Mac, it takes over the screen: windows pop up, focus jumps, and you can't type until it finishes. Offscreen runs those jobs in a fresh macOS VM instead. Any number of agents, terminals and scripts share one queue, and each job gives you back logs, screenshots and an `.xcresult` bundle.
+
+> [!NOTE]
+> Offscreen is beta software. Commands, config and on-disk state may change between versions. Please [open an issue](https://github.com/markphelps/offscreen/issues) if something breaks.
 
 <!--
   TODO demo GIF: replace this comment with
@@ -40,7 +43,7 @@ cd examples/hello
 offscreen run hello test-ui
 ```
 
-The last command builds a small SwiftUI app on your Mac, runs its UI test inside a fresh VM, streams the output, and prints the job's artifact directory. Nothing opens on your desktop. The install also adds `ofs` as a shorter name for `offscreen`. If `offscreen` isn't found, add `~/.local/bin` to your `PATH`. Each `offscreen image build` or `image refresh` leaves the previous image in Tart; `offscreen image prune` lists them and asks before deleting. For other problems, see the [install guide](docs/install.md).
+The last command builds a small SwiftUI app on your Mac, runs its UI test inside a fresh VM, streams the output, and prints the job's artifact directory. Nothing opens on your desktop. If `offscreen` isn't found, add `~/.local/bin` to your `PATH`. For other problems, see the [install guide](docs/install.md).
 
 ## Use it in your repo
 
@@ -63,6 +66,12 @@ Then tell your agent to run this instead of `xcodebuild test`:
 ```sh
 offscreen run myapp ui
 offscreen run myapp -- swift test   # or any one-off command
+```
+
+To make that stick, add a line like this to your `AGENTS.md` or `CLAUDE.md`:
+
+```md
+Run UI tests with `offscreen run myapp ui`. Never run `xcodebuild test` directly; it takes over the user's screen.
 ```
 
 `offscreen run` exits with the wrapped command's status, so agents and scripts read pass/fail the usual way. Offscreen's own failures use separate codes: 75 for a queue timeout, 70 for VM or daemon errors. Tasks write screenshots and results to `$OFFSCREEN_OUT`, and `offscreen artifacts <job>` prints where those ended up. The [config reference](docs/config.md) covers guest setup, caches and environment variables.
