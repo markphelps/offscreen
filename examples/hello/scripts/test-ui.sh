@@ -16,4 +16,5 @@ xcodebuild \
     -resultBundlePath "$OFFSCREEN_OUT/Hello.xcresult" \
     -parallel-testing-enabled NO \
     COMPILER_INDEX_STORE_ENABLE=NO \
+    ONLY_ACTIVE_ARCH=YES \
     test
