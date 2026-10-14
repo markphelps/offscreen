@@ -1,4 +1,4 @@
-# Hello: macOS GUI example
+# Hello: macOS and iOS GUI example
 
 A one-window SwiftUI app for trying offscreen without a developer account, XcodeGen, mise, or Homebrew. The window is titled **Hello**. Its **Change label** button changes **Ready** to **Changed**. The shared Xcode scheme includes an XCUITest that clicks the button and checks both labels.
 

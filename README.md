@@ -8,9 +8,9 @@
 [![CI](https://github.com/markphelps/offscreen/actions/workflows/ci.yml/badge.svg)](https://github.com/markphelps/offscreen/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Run macOS UI tests in throwaway VMs, so your agents stop taking over your screen.**
+**Give your agents a Mac screen of their own. Offscreen runs UI tests, the iOS Simulator and GUI apps in throwaway VMs, so your desktop stays yours.**
 
-When a coding agent or script runs XCUITest on your Mac, it takes over the screen: windows pop up, focus jumps, and you can't type until it finishes. Offscreen runs those jobs in a fresh macOS VM instead. Any number of agents, terminals and scripts share one queue, and each job gives you back logs, screenshots and an `.xcresult` bundle.
+When a coding agent runs XCUITest, boots the iOS Simulator, or launches the app it just built, it takes over your Mac: windows pop up, focus jumps, and you can't type until it finishes. Offscreen runs that work in a fresh macOS VM instead. Any number of agents, terminals and scripts share one queue, and each job gives you back logs, screenshots and `.xcresult` bundles.
 
 > [!NOTE]
 > Offscreen is beta software. Commands, config and on-disk state may change between versions. Please [open an issue](https://github.com/markphelps/offscreen/issues) if something breaks.
@@ -43,7 +43,16 @@ cd examples/hello
 offscreen run hello test-ui
 ```
 
-The last command builds a small SwiftUI app on your Mac, runs its UI test inside a fresh VM, streams the output, and prints the job's artifact directory. Nothing opens on your desktop. If `offscreen` isn't found, add `~/.local/bin` to your `PATH`. For other problems, see the [install guide](docs/install.md).
+The last command builds a small SwiftUI app on your Mac, runs its UI test inside a fresh VM, streams the output, and prints the job's artifact directory. Nothing opens on your desktop. The same example has two more tasks: `offscreen run hello test-ios` runs the test in an iOS Simulator inside the VM, and `offscreen run hello launch` opens the app and saves a screenshot. If `offscreen` isn't found, add `~/.local/bin` to your `PATH`. For other problems, see the [install guide](docs/install.md).
+
+## What you can run
+
+Anything that needs a logged-in Mac desktop:
+
+- **macOS UI tests.** XCUITest for Mac apps, with `.xcresult` bundles collected after each run.
+- **iOS Simulator tests.** XCUITest against an iPhone simulator inside the VM; the hello example runs on the default image with no extra setup. A fresh VM boots the simulator from scratch, so expect a few minutes per run, or warm it once in the golden image ([hello example](examples/hello/README.md#offscreen-tasks)).
+- **Launch and look.** Open the app your agent just built, drive it with AppleScript or System Events, and save screenshots for the agent (or you) to check.
+- **One-off commands.** `offscreen run myapp -- <cmd>` runs any command in a fresh VM, no task definition needed.
 
 ## Use it in your repo
 
@@ -61,14 +70,20 @@ lane = "vm"
 run = "sh scripts/ui-test.sh"
 ```
 
-Then tell your agent to run this instead of `xcodebuild test`:
+Then tell your agent to run this instead of `xcodebuild test` or launching the app itself:
 
 ```sh
 offscreen run myapp ui
 offscreen run myapp -- swift test   # or any one-off command
 ```
 
-To make that stick, add a line like this to your `AGENTS.md` or `CLAUDE.md`:
+To teach your agent the rest (reading exit codes and artifacts, queuing long jobs, and what not to touch), install the [offscreen skill](skills/offscreen/SKILL.md):
+
+```sh
+npx skills add markphelps/offscreen      # add -g to install for all projects
+```
+
+Or, without the skill, add a line like this to your `AGENTS.md` or `CLAUDE.md`:
 
 ```md
 Run UI tests with `offscreen run myapp ui`. Never run `xcodebuild test` directly; it takes over the user's screen.
@@ -78,7 +93,7 @@ Run UI tests with `offscreen run myapp ui`. Never run `xcodebuild test` directly
 
 ## How it compares
 
-- **Running tests on your own desktop.** This works fine until a test opens a window while you're typing. Offscreen runs the same `xcodebuild` commands in a VM, so you keep working.
+- **Running tests on your own desktop.** This works fine until a test or the Simulator opens a window while you're typing. Offscreen runs the same `xcodebuild` commands in a VM, so you keep working.
 - **Running Tart yourself.** Tart is the VM layer offscreen uses. Offscreen adds the parts you'd otherwise script by hand: a per-job clone of a golden image, copying the worktree and build products in, collecting artifacts, cleaning up afterwards, and a single queue for every caller, capped at Apple's limit of two macOS VMs.
 - **Hosted macOS CI** (GitHub Actions, Cirrus, and others). CI runs after you push. Offscreen runs locally whenever you or your agent call it, before you commit. It doesn't replace CI.
 
