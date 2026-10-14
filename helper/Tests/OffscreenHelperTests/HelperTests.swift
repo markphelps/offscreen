@@ -3,6 +3,34 @@ import XCTest
 @testable import OffscreenHelper
 
 final class HelperTests: XCTestCase {
+    /// Renders the menu bar icon at Retina scale, one pixel per design unit.
+    private func menuBarAlpha(running: Bool) -> (Int, Int) -> CGFloat {
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 46, pixelsHigh: 38, bitsPerSample: 8,
+                                   samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                   colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        rep.size = MenuBarIcon.size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        MenuBarIcon.image(running: running).draw(in: NSRect(origin: .zero, size: MenuBarIcon.size))
+        NSGraphicsContext.restoreGraphicsState()
+        return { x, y in rep.colorAt(x: x, y: y)?.alphaComponent ?? -1 }
+    }
+
+    func testMenuBarIconIsATemplateWithACursorOnlyWhileRunning() {
+        XCTAssertTrue(MenuBarIcon.image(running: false).isTemplate)
+        let idle = menuBarAlpha(running: false)
+        let running = menuBarAlpha(running: true)
+        for alpha in [idle, running] {
+            XCTAssertEqual(alpha(25, 5), 1, "back display is filled")
+            XCTAssertEqual(alpha(3, 25), 1, "front display outline")
+            XCTAssertEqual(alpha(18, 25), 0, "front display is empty")
+            XCTAssertEqual(alpha(36, 18), 0, accuracy: 0.05, "gap beside the front display")
+            XCTAssertEqual(alpha(25, 11), 0, accuracy: 0.05, "gap above the front display")
+        }
+        XCTAssertEqual(idle(40, 7), 1)
+        XCTAssertEqual(running(40, 7), 0, "cursor is cut out of the back display")
+    }
+
     func testCameraActiveOrUnknownDevicesCannotBeIdle() {
         XCTAssertEqual(Sensors.cameraIdle(deviceStates: []), true)
         XCTAssertEqual(Sensors.cameraIdle(deviceStates: [0, 0]), true)

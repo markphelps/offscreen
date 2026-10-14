@@ -308,7 +308,7 @@ final class NotificationHandler: NSObject, UNUserNotificationCenterDelegate, @un
     }
 
     var body: some Scene {
-        MenuBarExtra("Offscreen", systemImage: AppState.model.status?.running == nil ? "moon" : "display") {
+        MenuBarExtra {
             let model = AppState.model
             if let current = model.status {
                 if let job = current.running {
@@ -351,6 +351,9 @@ final class NotificationHandler: NSObject, UNUserNotificationCenterDelegate, @un
             }
             Divider()
             Button("Quit Offscreen Helper") { NSApplication.shared.terminate(nil) }
+        } label: {
+            Image(nsImage: MenuBarIcon.image(running: AppState.model.status?.running != nil))
+                .accessibilityLabel("Offscreen")
         }
     }
 }

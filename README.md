@@ -1,4 +1,9 @@
-# offscreen
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/header-dark.svg">
+    <img src="docs/assets/header.svg" alt="offscreen" height="64">
+  </picture>
+</h1>
 
 [![CI](https://github.com/markphelps/offscreen/actions/workflows/ci.yml/badge.svg)](https://github.com/markphelps/offscreen/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
