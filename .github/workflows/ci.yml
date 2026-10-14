@@ -5,22 +5,29 @@ on:
   pull_request:
 
 jobs:
-  go:
-    runs-on: macos-15
+  # Linting needs no Mac. The Go code is macOS-only but has no cgo, so
+  # golangci-lint type-checks it for darwin from Linux.
+  lint:
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v3
-      - name: Lint
+        with:
+          install_args: go golangci-lint shellcheck
+      - name: Go lint (GOOS=darwin)
         run: mise run lint:go
-      - name: Unit tests
-        run: mise run test:go
-      # Guards the C04 fix: guardian subprocesses must keep coverage warnings out of task output.
-      - name: Coverage-instrumented guardian tests
-        run: go test ./internal/run -cover -count=1
+        env:
+          GOOS: darwin
+      - name: ShellCheck
+        if: ${{ !cancelled() }}
+        run: mise run lint:sh
 
-  helper:
+  # The tests need a Mac: internal/run's process guardian is darwin-only, so
+  # most Go packages' tests do not compile for Linux, and the helper is Swift
+  # for macOS. One job, so a run pays for one macOS runner.
+  test:
     # Package.swift needs Swift 6.2; macos-26's default Xcode provides it.
     runs-on: macos-26
     permissions:
@@ -29,19 +36,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v3
         with:
-          install: false
+          install_args: go
+      - name: Go unit tests
+        run: mise run test:go
+      # Guards the C04 fix: guardian subprocesses must keep coverage warnings out of task output.
+      - name: Coverage-instrumented guardian tests
+        run: go test ./internal/run -cover -count=1
       # Builds and runs the pure XCTest suite only: no bundle, install or launch.
       - name: Swift helper build and unit tests
+        if: ${{ !cancelled() }}
         run: mise run test:helper
-
-  shellcheck:
-    runs-on: macos-15
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: jdx/mise-action@v3
-        with:
-          install_args: shellcheck
-      - name: ShellCheck
-        run: mise run lint:sh
