@@ -20,6 +20,7 @@ func TestPrepareUsesSubmissionEnvironmentWithoutChangingDaemonPath(t *testing.T)
 	require.NoError(t, os.WriteFile(fakeTart, []byte("#!/bin/sh\nexit 42\n"), 0o700)) // #nosec G306 -- private test executable
 	t.Setenv("PATH", fakeBin+":/usr/bin:/bin")
 	t.Setenv("FOO", "daemon-value")
+	t.Setenv("OFFSCREEN_STATE_DIR", filepath.Join(t.TempDir(), "state"))
 	cfg := config.Default()
 	cfg.CurrentImage = "test-image"
 	contract := project.Contract{Root: root, Project: "hello", Prepare: project.Prepare{

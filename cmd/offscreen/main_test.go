@@ -82,6 +82,7 @@ func TestRunCommandAcceptsFlagsAfterTask(t *testing.T) {
 }
 
 func TestRunCommandPassesThroughRawCommand(t *testing.T) {
+	t.Chdir(t.TempDir()) // The repository root may hold its own .offscreen.toml.
 	var cli CLI
 	parser, err := kong.New(&cli)
 	require.NoError(t, err)

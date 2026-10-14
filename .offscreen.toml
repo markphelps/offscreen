@@ -1,0 +1,10 @@
+# Offscreen runs its own Go tests in a disposable VM: offscreen run offscreen test
+project = "offscreen"
+
+[prepare]
+run = "sh scripts/selftest/prepare.sh"
+share = ["bin/tests"]
+
+[tasks.test]
+lane = "vm"
+run = "sh scripts/selftest/run.sh"
