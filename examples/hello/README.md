@@ -22,9 +22,10 @@ After installing offscreen and building its image, run from this directory:
 ```sh
 offscreen run hello launch
 offscreen run hello test-ui
+offscreen run hello test-ios
 ```
 
-`launch` builds `Hello.app` on the host into `.build/`, copies that app into a disposable VM, waits for its **Hello** window via System Events, and saves `hello.png` under `$OFFSCREEN_OUT`. `test-ui` compiles and runs the XCUITest **in the guest**, keeping its derived data in the per-project `$OFFSCREEN_CACHE` and its `Hello.xcresult` in `$OFFSCREEN_OUT`. Offscreen prints the job's artifact directory at the end of each run. Neither task needs a package manager or a developer account.
+`launch` builds `Hello.app` on the host into `.build/`, copies that app into a disposable VM, waits for its **Hello** window via System Events, and saves `hello.png` under `$OFFSCREEN_OUT`. `test-ui` compiles and runs the XCUITest **in the guest**, keeping its derived data in the per-project `$OFFSCREEN_CACHE` and its `Hello.xcresult` in `$OFFSCREEN_OUT`. `test-ios` runs the same XCUITest in an iOS Simulator inside the VM, using the first available iPhone in the image, and saves `HelloIOS.xcresult`. The simulator boots from scratch in each fresh VM, so expect a few minutes per run. To boot it once while building the golden image instead, copy `scripts/image-setup-ios.sh` somewhere stable, add that path to `[image] setup` in your offscreen config, and run `offscreen image build`; on a test machine this cut a warm-cache `test-ios` run from about 3.5 minutes to under 2. Offscreen prints the job's artifact directory at the end of each run. Neither task needs a package manager or a developer account.
 
 The app and test are in `Hello.xcodeproj`, which is checked in; opening this example never generates a project. `.build/` is ignored by Git.
 

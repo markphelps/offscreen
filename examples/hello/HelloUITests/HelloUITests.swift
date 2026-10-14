@@ -7,11 +7,24 @@ final class HelloUITests: XCTestCase {
 
         let status = app.staticTexts["statusLabel"]
         XCTAssertTrue(status.waitForExistence(timeout: 10))
-        XCTAssertEqual(status.value as? String, "Ready")
+        XCTAssertEqual(text(of: status), "Ready")
 
         let button = app.buttons["Change label"]
         XCTAssertTrue(button.exists)
+        #if os(macOS)
         button.click()
-        XCTAssertEqual(status.value as? String, "Changed")
+        #else
+        button.tap()
+        #endif
+        XCTAssertEqual(text(of: status), "Changed")
+    }
+
+    // macOS exposes a static text's string as its value; iOS exposes it as its label.
+    private func text(of element: XCUIElement) -> String {
+        #if os(macOS)
+        element.value as? String ?? ""
+        #else
+        element.label
+        #endif
     }
 }

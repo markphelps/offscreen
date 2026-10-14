@@ -11,3 +11,7 @@ run = "sh scripts/launch.sh"
 [tasks.test-ui]
 lane = "vm"
 run = "sh scripts/test-ui.sh"
+
+[tasks.test-ios]
+lane = "vm"
+run = "sh scripts/test-ios.sh"
