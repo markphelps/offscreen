@@ -69,6 +69,9 @@ import SwiftUI
     // has host work, so VM-only users are never asked for the permission.
     private var hostActive = false
     private var sensing = false
+    // Held while sensing so App Nap can't delay the 1s heartbeat past the
+    // daemon's 3s freshness limit.
+    private var napActivity: NSObjectProtocol?
     private var previousNotice = ""
     private var refreshing = false
     private var refreshAfterInput = false
@@ -518,11 +521,21 @@ extension HostModel {
         guard on else {
             if sensing { removeTap() }
             sensing = false
+            if let activity = napActivity {
+                ProcessInfo.processInfo.endActivity(activity)
+                napActivity = nil
+            }
             return
         }
         if !sensing {
             sensing = true
             _ = CGRequestListenEventAccess()
+        }
+        if napActivity == nil {
+            // Keeps timers on time without preventing idle system sleep.
+            napActivity = ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
+                reason: "Sending the host heartbeat while sensing")
         }
         if let tap = eventTap, !CFMachPortIsValid(tap) { removeTap() }
         // A denied grant can be enabled in System Settings without restarting.
