@@ -136,6 +136,45 @@ enum LoginItem {
         return .failed("Start at Login is on, but launchd didn't start Offscreen. It may start at the next login.")
     }
 
+    /// The launch flag the Homebrew cask's post-install hook runs on the new
+    /// bundle's executable: see renew.
+    static let renewFlag = "--renew-start-at-login"
+
+    /// Renews Start at Login after an upgrade, for `--renew-start-at-login`.
+    /// The old version's uninstall unloads the login job, but SMAppService
+    /// still reports it enabled, and launchd refuses the new signature until
+    /// the registration is renewed. Returns nil, having changed nothing, when
+    /// Start at Login is off. macOS refuses the first registration of a newly
+    /// installed build, so a failed handover is tried once more after
+    /// `retry` seconds. `say` gets progress for the person running brew.
+    static func renew(_ service: any LoginService, sourceInstall: Bool, bundled: Bool, self pid: Int32 = getpid(),
+                      within seconds: Double = 5, retry: Double = 15,
+                      say: (String) -> Void = { _ in }) -> HandOver? {
+        guard service.status == .enabled, !sourceInstall, bundled else { return nil }
+        say("Renewing Start at Login; this can take about 25 seconds.")
+        let first = handOver(service, reregister: true, self: pid, within: seconds)
+        guard case .failed(let message) = first else { return first }
+        log.notice("start at login: renewal refused, retrying in \(retry)s: \(message, privacy: .public)")
+        Thread.sleep(forTimeInterval: retry)
+        return handOver(service, reregister: true, self: pid, within: seconds)
+    }
+
+    /// Runs `--renew-start-at-login` before any UI or the single-instance
+    /// check. It always exits 0, so it never fails the brew install.
+    static func renewAndExit() -> Never {
+        func say(_ message: String) { FileHandle.standardError.write(Data("offscreen: \(message)\n".utf8)) }
+        switch renew(AgentLoginService(), sourceInstall: sourceInstalled(), bundled: bundled(), say: say) {
+        case nil: break
+        case .running: say("Start at Login renewed; Offscreen is running.")
+        case .needsApproval:
+            say("Start at Login needs approval in System Settings > General > Login Items & Extensions.")
+        case .failed(let message):
+            log.error("start at login: renewal failed: \(message, privacy: .public)")
+            say("\(message) Open Offscreen to try again.")
+        }
+        exit(0)
+    }
+
     /// macOS keeps the code hash of whichever build registered the label
     /// last, even across unregister, and launchd then refuses this build
     /// (EX_CONFIG). Only unregistering an enabled record clears it, so

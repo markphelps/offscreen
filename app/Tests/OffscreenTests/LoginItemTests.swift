@@ -27,7 +27,7 @@ final class FakeLogin: LoginService, @unchecked Sendable {
     func neverStartJob() { lock.withLock { jobAfterRegister = nil } }
     /// The job runs only from the nth register call on, as macOS does with
     /// a newly installed build.
-    func startJobFromRegister(_ n: Int) { lock.withLock { jobFromRegister = n } }
+    func startJobFromRegister(_ count: Int) { lock.withLock { jobFromRegister = count } }
     /// Each register call blocks this long, as a slow BTM does.
     func slowRegister(_ seconds: Double) { lock.withLock { registerDelay = seconds } }
 
@@ -146,6 +146,56 @@ final class LoginItemTests: XCTestCase {
         guard case .failed = LoginItem.handOver(login, reregister: false, self: 4242, within: 0.2) else {
             return XCTFail("only another pid is the login job's copy")
         }
+    }
+
+    func testRenewWhenOnRegistersAgainAndWaitsForTheJob() {
+        let login = FakeLogin(status: .enabled)
+        var said: [String] = []
+        XCTAssertEqual(LoginItem.renew(login, sourceInstall: false, bundled: true, self: 1, within: 1, retry: 0,
+                                       say: { said.append($0) }), .running)
+        XCTAssertEqual(login.calls, ["unregister", "register"])
+        XCTAssertEqual(said.count, 1, "tells the brew user it may take a while")
+    }
+
+    func testRenewWhenOffChangesNothing() {
+        for status in [LoginStatus.notRegistered, .notFound, .requiresApproval] {
+            let login = FakeLogin(status: status)
+            XCTAssertNil(LoginItem.renew(login, sourceInstall: false, bundled: true, self: 1, within: 1, retry: 0))
+            XCTAssertEqual(login.calls, [], "an upgrade must not turn Start at Login on (\(status))")
+        }
+    }
+
+    func testRenewLeavesASourceInstallAndAnUnbundledBuildAlone() {
+        let source = FakeLogin(status: .enabled)
+        XCTAssertNil(LoginItem.renew(source, sourceInstall: true, bundled: true, self: 1, within: 1, retry: 0))
+        XCTAssertEqual(source.calls, [])
+        let unbundled = FakeLogin(status: .enabled)
+        XCTAssertNil(LoginItem.renew(unbundled, sourceInstall: false, bundled: false, self: 1, within: 1, retry: 0))
+        XCTAssertEqual(unbundled.calls, [])
+    }
+
+    func testRenewRefusedForANewBuildIsRetriedOnce() {
+        let login = FakeLogin(status: .enabled)
+        login.startJobFromRegister(2) // macOS refuses the first registration of a new build
+        XCTAssertEqual(LoginItem.renew(login, sourceInstall: false, bundled: true, self: 1, within: 1, retry: 0),
+                       .running)
+        XCTAssertEqual(login.calls, ["unregister", "register", "unregister", "register"])
+
+        let stuck = FakeLogin(status: .enabled)
+        stuck.neverStartJob()
+        guard case .failed = LoginItem.renew(stuck, sourceInstall: false, bundled: true, self: 1, within: 0.2,
+                                             retry: 0) else {
+            return XCTFail("a job that never starts fails after one retry")
+        }
+        XCTAssertEqual(stuck.calls.filter { $0 == "register" }.count, 2, "only one retry")
+    }
+
+    func testRenewDoesNotRetryAnApproval() {
+        let login = FakeLogin(status: .enabled)
+        login.needApproval()
+        XCTAssertEqual(LoginItem.renew(login, sourceInstall: false, bundled: true, self: 1, within: 1, retry: 0),
+                       .needsApproval)
+        XCTAssertEqual(login.calls, ["unregister", "register"])
     }
 
     func testWaitForExitReturnsOnceTheOthersAreGone() {

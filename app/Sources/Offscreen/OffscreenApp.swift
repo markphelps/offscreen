@@ -871,6 +871,7 @@ enum HostSensing {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     init() {
+        if CommandLine.arguments.contains(LoginItem.renewFlag) { LoginItem.renewAndExit() }
         Self.exitIfAlreadyRunning()
         let launchError = Self.handOverToLoginJob()
         if Notifier.available {

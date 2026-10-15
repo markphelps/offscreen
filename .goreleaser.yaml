@@ -89,6 +89,13 @@ homebrew_casks:
           unless result.success?
             opoo "offscreen daemon install failed; run it again to fix it."
           end
+          # An upgrade's uninstall unloads the Start at Login job, and macOS
+          # won't start a new build from the old registration. If Start at
+          # Login is on, this renews it and launchd starts the new Offscreen;
+          # otherwise it does nothing. It always exits 0.
+          system_command "#{appdir}/Offscreen.app/Contents/MacOS/Offscreen",
+                         args:         ["--renew-start-at-login"],
+                         print_stderr: true
       # Runs before the binaries are removed.
       pre:
         uninstall: |
@@ -113,9 +120,9 @@ homebrew_casks:
 
       To start Offscreen at login, turn on Start at Login in its menu.
       launchd then also relaunches it if it crashes. If you added Offscreen
-      to Open at Login in System Settings by hand, remove that entry. Open
-      Offscreen once after each upgrade so it renews Start at Login, and
-      turn Start at Login off before brew uninstall.
+      to Open at Login in System Settings by hand, remove that entry. An
+      upgrade renews Start at Login and starts the new version, which can
+      take about 25 seconds. Turn Start at Login off before brew uninstall.
 
       After an upgrade, macOS may ask again for Local Network, Notifications
       or Input Monitoring. Grant them in System Settings > Privacy & Security.
