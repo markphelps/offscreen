@@ -80,7 +80,7 @@ func TestMissingBinaryReportsNotInstalled(t *testing.T) {
 			for _, err := range []error{listErr, pullErr, startErr} {
 				require.ErrorIs(t, err, ErrNotInstalled)
 				require.ErrorContains(t, err, "tart isn't installed or isn't on PATH")
-				require.ErrorContains(t, err, "install it with: brew install cirruslabs/cli/tart")
+				require.ErrorContains(t, err, "install it with: brew install openai/tools/tart")
 			}
 			require.True(t, strings.HasPrefix(listErr.Error(), "tart list --format json: "))
 		})

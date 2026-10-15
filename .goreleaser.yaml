@@ -58,11 +58,11 @@ homebrew_casks:
     # the app and the ofs alias go in a custom block. Offscreen.app needs
     # macOS 14 (app/Package.swift).
     custom_block: |
-      depends_on macos: ">= :sonoma"
+      depends_on macos: :sonoma
       app "Offscreen.app"
       binary "offscreen", target: "ofs"
     dependencies:
-      - formula: cirruslabs/cli/tart
+      - formula: openai/tools/tart
     repository:
       owner: markphelps
       name: homebrew-tap

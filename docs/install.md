@@ -6,12 +6,12 @@ Install with Homebrew unless you're working on Offscreen itself. [Building from 
 
 - An Apple silicon Mac running macOS 14 or later.
 - Full Xcode selected as the developer directory, for Xcode projects such as the [Hello example](../examples/hello/README.md). Check that `xcode-select -p` points to Xcode's `Contents/Developer` directory and that `xcodebuild -version` reports Xcode. A source build also needs the Swift 6.2+ that Xcode provides for the Offscreen menu bar app; check with `swift --version`.
-- [Tart](https://tart.run/) on `PATH`. The Homebrew cask installs it for you. For a source install, run `brew install cirruslabs/cli/tart`.
+- [Tart](https://tart.run/) on `PATH`. The Homebrew cask installs it for you. For a source install, run `brew install openai/tools/tart`.
 - For a source install only: Go 1.27 or newer.
 
 The default guest image includes macOS and Xcode and may take time and disk space to download.
 
-If Tart is missing, VM jobs and image commands fail with `tart isn't installed or isn't on PATH`. Install it with `brew install cirruslabs/cli/tart`. If the error came from the daemon, also run `offscreen daemon install` from a shell where `tart` is on `PATH`: the daemon finds Tart through the `PATH` recorded when it was installed.
+If Tart is missing, VM jobs and image commands fail with `tart isn't installed or isn't on PATH`. Install it with `brew install openai/tools/tart`. If the error came from the daemon, also run `offscreen daemon install` from a shell where `tart` is on `PATH`: the daemon finds Tart through the `PATH` recorded when it was installed.
 
 ## Install with Homebrew
 
@@ -27,7 +27,7 @@ The cask installs all three parts of Offscreen, plus Tart:
 | `offscreen` CLI | In Homebrew's `bin` directory, plus `ofs` as a shorter name |
 | `offscreend` daemon | In Homebrew's `bin` directory. The cask runs `offscreen daemon install`, which copies it into a signed `OffscreenDaemon.app` in the state directory, run by the `io.latentsignal.offscreend` LaunchAgent |
 | **Offscreen** menu bar app | `/Applications/Offscreen.app` |
-| Tart | The `cirruslabs/cli/tart` formula, if it isn't installed already |
+| Tart | The `openai/tools/tart` formula, if it isn't installed already |
 
 Offscreen is ad-hoc signed, not signed with a Developer ID or notarized. The cask removes the quarantine attribute from `offscreen`, `offscreend` and Offscreen.app so that macOS opens them, which skips Gatekeeper's check. Install it only if you trust this repository.
 
@@ -48,7 +48,7 @@ An upgrade quits Offscreen and reinstalls the daemon so that it matches the new 
 brew uninstall --cask offscreen
 ```
 
-This quits Offscreen, runs `offscreen daemon uninstall`, and removes the binaries, the `ofs` alias and the app. Your job history, config and images stay. `brew uninstall --zap --cask offscreen` also deletes `~/Library/Application Support/offscreen` (job history, artifacts, logs and the user config) and Offscreen's preferences. Neither removes Tart or your Tart images; use `tart list` and `tart delete` for those, and `brew uninstall cirruslabs/cli/tart` for Tart itself.
+This quits Offscreen, runs `offscreen daemon uninstall`, and removes the binaries, the `ofs` alias and the app. Your job history, config and images stay. `brew uninstall --zap --cask offscreen` also deletes `~/Library/Application Support/offscreen` (job history, artifacts, logs and the user config) and Offscreen's preferences. Neither removes Tart or your Tart images; use `tart list` and `tart delete` for those, and `brew uninstall openai/tools/tart` for Tart itself.
 
 ### Don't mix Homebrew and source installs
 
@@ -56,7 +56,7 @@ A source install and the cask install the same app identifier and the same daemo
 
 ## Build from source
 
-Install Tart first (`brew install cirruslabs/cli/tart`). You don't need mise to build.
+Install Tart first (`brew install openai/tools/tart`). You don't need mise to build.
 
 ```sh
 git clone https://github.com/markphelps/offscreen.git

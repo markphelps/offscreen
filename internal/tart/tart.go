@@ -23,7 +23,7 @@ const errorLines = 20
 var ErrNotInstalled = errors.New("tart isn't installed or isn't on PATH")
 
 // InstallHint is the command that installs Tart.
-const InstallHint = "brew install cirruslabs/cli/tart"
+const InstallHint = "brew install openai/tools/tart"
 
 type notInstalledError struct{ err error }
 
