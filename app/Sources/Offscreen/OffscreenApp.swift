@@ -99,6 +99,10 @@ import SwiftUI
     private let bundled: Bool
     private let exitApp: @MainActor () -> Void
     private var loginTicks = 0
+    // macOS refuses the first registration of a newly installed build
+    // (EX_CONFIG) and accepts the same registration a few seconds later, so
+    // a failed handover is tried once more after this long.
+    private let handOverRetry: Double
 
     init(bridge: any HostBridge = Bridge(socketPath: Bridge.defaultSocket()),
          manualReturn: Bool = UserDefaults.standard.bool(forKey: "ManualReturn"),
@@ -111,8 +115,10 @@ import SwiftUI
          startedByAgent: Bool = LoginItem.startedByAgent(),
          sourceInstalled: @escaping () -> Bool = { LoginItem.sourceInstalled() },
          bundled: Bool = LoginItem.bundled(),
-         exitApp: @escaping @MainActor () -> Void = { exit(0) }) {
+         exitApp: @escaping @MainActor () -> Void = { exit(0) },
+         handOverRetry: Double = 15) {
         self.login = login
+        self.handOverRetry = handOverRetry
         self.startedByAgent = startedByAgent
         self.sourceInstalled = sourceInstalled
         self.bundled = bundled
@@ -556,6 +562,27 @@ extension HostModel {
 
     func approveLoginItem() { login.openSettings() }
 
+    /// Tries a failed handover to the login job once more, after
+    /// handOverRetry. This copy keeps running meanwhile; it shows `message`
+    /// only if the retry fails too.
+    @discardableResult
+    func retryHandOver(after message: String) -> Task<Void, Never> {
+        let login = self.login
+        let delay = handOverRetry
+        return Task {
+            try? await Task.sleep(for: .seconds(delay))
+            // Turned off, or quitting, in the meantime.
+            guard !controlling, login.status == .enabled else { return }
+            let result = await Blocking.run { LoginItem.handOver(login, reregister: true) }
+            refreshLoginItem()
+            switch result {
+            case .running: exitApp()
+            case .needsApproval: break
+            case .failed: actionError = message
+            }
+        }
+    }
+
     /// The Start at Login checkbox.
     ///
     /// Turning it on registers the login job, and launchd starts a copy of
@@ -584,12 +611,14 @@ extension HostModel {
                 }
             }
             return Task {
-                let result = await Blocking.run { LoginItem.handOver(login, reregister: false) }
+                // Clears a stale record a previous build left under the label;
+                // macOS keeps its code hash and launchd then refuses this one.
+                let result = await Blocking.run { LoginItem.handOver(login, reregister: true) }
                 refreshLoginItem()
                 switch result {
                 case .running: exitApp()
                 case .needsApproval: break
-                case .failed(let message): actionError = message
+                case .failed(let message): await retryHandOver(after: message).value
                 }
             }
         }
@@ -846,8 +875,8 @@ struct JobsMenu: View {
             UNUserNotificationCenter.current().delegate = NotificationHandler.shared
         }
         Task { @MainActor in
-            if let launchError { AppState.model.actionError = launchError }
             AppState.model.start()
+            if let launchError { AppState.model.retryHandOver(after: launchError) }
         }
     }
 

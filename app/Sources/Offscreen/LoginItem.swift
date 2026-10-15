@@ -49,7 +49,11 @@ struct AgentLoginService: LoginService {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { return nil }
-        return DaemonControl.pid(fromPrint: String(decoding: data, as: UTF8.self))
+        let output = String(decoding: data, as: UTF8.self)
+        // A spawn that fails (e.g. EX_CONFIG) shows a pid for a few
+        // milliseconds without ever reaching running.
+        guard output.split(separator: "\n").contains("\tstate = running") else { return nil }
+        return DaemonControl.pid(fromPrint: output)
     }
 
     func openSettings() { SMAppService.openSystemSettingsLoginItems() }
@@ -120,20 +124,44 @@ enum LoginItem {
     static func handOver(_ service: any LoginService, reregister: Bool, self pid: Int32 = getpid(),
                          within seconds: Double = 5) -> HandOver {
         do {
-            if reregister { try service.unregister() }
+            if reregister { try refresh(service) }
             try service.register()
         } catch {
             log.warning("start at login: register failed: \(error, privacy: .public)")
             return .failed("Start at Login failed: \(error.localizedDescription)")
         }
         if service.status == .requiresApproval { return .needsApproval }
-        let deadline = Date().addingTimeInterval(seconds)
-        while true {
-            if let job = try? service.jobPID(), job != pid { return .running }
-            if Date() >= deadline { break }
-            Thread.sleep(forTimeInterval: 0.1)
-        }
+        if jobRuns(service, other: pid, within: seconds) { return .running }
         log.warning("start at login: launchd didn't start the login job within \(seconds)s")
         return .failed("Start at Login is on, but launchd didn't start Offscreen. It may start at the next login.")
+    }
+
+    /// macOS keeps the code hash of whichever build registered the label
+    /// last, even across unregister, and launchd then refuses this build
+    /// (EX_CONFIG). Only unregistering an enabled record clears it, so
+    /// register first if needed.
+    private static func refresh(_ service: any LoginService) throws {
+        if service.status != .enabled { try service.register() }
+        try service.unregister()
+    }
+
+    /// Whether launchd runs the login job as a process other than `other`,
+    /// with the same pid on two reads at least half a second apart.
+    private static func jobRuns(_ service: any LoginService, other: Int32, within seconds: Double) -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        var seen: (pid: Int32, at: Date)?
+        while Date() < deadline {
+            if let job = try? service.jobPID(), job != other {
+                if let first = seen, first.pid == job {
+                    if Date().timeIntervalSince(first.at) >= 0.5 { return true }
+                } else {
+                    seen = (job, Date())
+                }
+            } else {
+                seen = nil
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return false
     }
 }

@@ -12,6 +12,8 @@ final class FakeLogin: LoginService, @unchecked Sendable {
     private var unregisterError: (any Error)?
     private var afterRegister: LoginStatus = .enabled
     private var jobAfterRegister: Int32? = 4242
+    private var registers = 0
+    private var jobFromRegister = 1
 
     init(status: LoginStatus = .notRegistered) { current = status }
 
@@ -22,10 +24,14 @@ final class FakeLogin: LoginService, @unchecked Sendable {
     func failUnregister(_ error: any Error) { lock.withLock { unregisterError = error } }
     func needApproval() { lock.withLock { afterRegister = .requiresApproval } }
     func neverStartJob() { lock.withLock { jobAfterRegister = nil } }
+    /// The job runs only from the nth register call on, as macOS does with
+    /// a newly installed build.
+    func startJobFromRegister(_ n: Int) { lock.withLock { jobFromRegister = n } }
 
     func register() throws {
         try lock.withLock {
             log.append("register")
+            registers += 1
             if let registerError { throw registerError }
             current = afterRegister
         }
@@ -40,7 +46,9 @@ final class FakeLogin: LoginService, @unchecked Sendable {
     }
 
     func jobPID() throws -> Int32? {
-        lock.withLock { current == .enabled && log.last == "register" ? jobAfterRegister : nil }
+        lock.withLock {
+            current == .enabled && log.last == "register" && registers >= jobFromRegister ? jobAfterRegister : nil
+        }
     }
 
     func openSettings() { lock.withLock { log.append("settings") } }
@@ -152,7 +160,19 @@ final class StartAtLoginTests: XCTestCase {
                        exits: Exits) -> HostModel {
         HostModel(bridge: Bridge(socketPath: "/nonexistent/offscreen.sock"), manualReturn: false, verifiedFilter: true,
                   post: { _ in }, control: control, confirm: confirm, login: login, startedByAgent: agent,
-                  sourceInstalled: { false }, bundled: true, exitApp: { exits.count += 1 })
+                  sourceInstalled: { false }, bundled: true, exitApp: { exits.count += 1 },
+                  handOverRetry: 0.05)
+    }
+
+    func testAHandoverRefusedForANewBuildIsRetriedOnce() async {
+        let login = FakeLogin()
+        login.startJobFromRegister(3) // the first registration cycle doesn't start the job
+        let exits = Exits()
+        let model = model(login, agent: false, exits: exits)
+        await model.setStartAtLogin(true)?.value
+        XCTAssertEqual(login.calls, ["register", "unregister", "register", "unregister", "register"])
+        XCTAssertEqual(exits.count, 1, "the retry hands over")
+        XCTAssertNil(model.actionError, "no error while the retry succeeds")
     }
 
     func testTickingFromAHandOpenedCopyHandsOverAndExits() async {
@@ -160,7 +180,7 @@ final class StartAtLoginTests: XCTestCase {
         let exits = Exits()
         let model = model(login, agent: false, exits: exits)
         await model.setStartAtLogin(true)?.value
-        XCTAssertEqual(login.calls, ["register"])
+        XCTAssertEqual(login.calls, ["register", "unregister", "register"], "a stale record from an earlier build must not block the job")
         XCTAssertEqual(exits.count, 1, "the login job's copy takes over")
         XCTAssertEqual(model.loginItem, LoginItem.Menu(isOn: true, enabled: true))
     }
