@@ -31,21 +31,25 @@ When a coding agent runs XCUITest, boots the iOS Simulator, or launches the app 
 
 You need an Apple silicon Mac with macOS 14 or later, full Xcode, and [Homebrew](https://brew.sh/).
 
+Install Offscreen and build its VM image:
+
 ```sh
 brew install --cask markphelps/tap/offscreen
                            # installs the CLI, the daemon, the Offscreen
                            # menu bar app and Tart
 open -a Offscreen          # if macOS asks, allow "Offscreen Daemon" on the Local Network
 offscreen image build      # one-time: pulls a macOS + Xcode image, takes a while, go grab lunch
+```
 
+Then try it on the example app. The example lives in this repository, so clone it to get the project; you don't build Offscreen itself:
+
+```sh
 git clone https://github.com/markphelps/offscreen.git
 cd offscreen/examples/hello
 offscreen run hello test-ui
 ```
 
-To build from source instead (Go 1.27+ and Swift 6.2+), see the [install guide](docs/install.md#build-from-source).
-
-The last command builds a small SwiftUI app on your Mac, runs its UI test inside a fresh VM, streams the output, and prints the job's artifact directory. Nothing opens on your desktop. The same example has two more tasks: `offscreen run hello test-ios` runs the test in an iOS Simulator inside the VM, and `offscreen run hello launch` opens the app and saves a screenshot. For problems, see the [install guide](docs/install.md).
+The last command builds a small SwiftUI app on your Mac, runs its UI test inside a fresh VM, streams the output, and prints the job's artifact directory. Nothing opens on your desktop. The same example has two more tasks: `offscreen run hello test-ios` runs the test in an iOS Simulator inside the VM, and `offscreen run hello launch` opens the app and saves a screenshot. For problems, see the [install guide](docs/install.md). It also covers [building from source](docs/install.md#build-from-source) if you'd rather not use Homebrew.
 
 Offscreen has three parts: the `offscreen` CLI, the `offscreend` daemon that runs jobs, and the **Offscreen** menu bar app. The app owns the daemon: opening Offscreen starts it, and quitting Offscreen stops it. Its menu lists queued, running and recently finished jobs from both lanes, with Cancel, Reveal Artifacts and Copy Job ID for each, plus Restart Daemon and Quit Offscreen. If Offscreen isn't running, CLI commands say so: `Offscreen isn't running. Open it with: open -a Offscreen`.
 
