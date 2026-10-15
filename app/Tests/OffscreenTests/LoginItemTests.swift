@@ -148,43 +148,32 @@ final class LoginItemTests: XCTestCase {
         }
     }
 
-    func testRenewWhenOnRegistersAgainAndWaitsForTheJob() {
-        let login = FakeLogin(status: .enabled)
-        var said: [String] = []
-        XCTAssertEqual(LoginItem.renew(login, sourceInstall: false, bundled: true, self: 1, within: 1, retry: 0,
-                                       say: { said.append($0) }), .running)
-        XCTAssertEqual(login.calls, ["unregister", "register"])
-        XCTAssertEqual(said.count, 1, "tells the brew user it may take a while")
-    }
-
-    func testRenewWhenOffChangesNothing() {
+    func testOnlyAnEnabledAgentInABundleIsRenewed() {
+        XCTAssertTrue(LoginItem.shouldRenew(status: .enabled, sourceInstall: false, bundled: true))
         for status in [LoginStatus.notRegistered, .notFound, .requiresApproval] {
-            let login = FakeLogin(status: status)
-            XCTAssertNil(LoginItem.renew(login, sourceInstall: false, bundled: true, self: 1, within: 1, retry: 0))
-            XCTAssertEqual(login.calls, [], "an upgrade must not turn Start at Login on (\(status))")
+            XCTAssertFalse(LoginItem.shouldRenew(status: status, sourceInstall: false, bundled: true),
+                           "an upgrade must not turn Start at Login on (\(status))")
         }
+        XCTAssertFalse(LoginItem.shouldRenew(status: .enabled, sourceInstall: true, bundled: true))
+        XCTAssertFalse(LoginItem.shouldRenew(status: .enabled, sourceInstall: false, bundled: false))
     }
 
-    func testRenewLeavesASourceInstallAndAnUnbundledBuildAlone() {
-        let source = FakeLogin(status: .enabled)
-        XCTAssertNil(LoginItem.renew(source, sourceInstall: true, bundled: true, self: 1, within: 1, retry: 0))
-        XCTAssertEqual(source.calls, [])
-        let unbundled = FakeLogin(status: .enabled)
-        XCTAssertNil(LoginItem.renew(unbundled, sourceInstall: false, bundled: false, self: 1, within: 1, retry: 0))
-        XCTAssertEqual(unbundled.calls, [])
+    func testRenewAfterTheRecordWasPurgedRegistersAgain() {
+        // Homebrew's purge removed the record, so the status no longer reads enabled.
+        let login = FakeLogin(status: .notFound)
+        XCTAssertEqual(LoginItem.renew(login, self: 1, within: 1, retry: 0), .running)
+        XCTAssertEqual(login.calls, ["register", "unregister", "register"])
     }
 
     func testRenewRefusedForANewBuildIsRetriedOnce() {
         let login = FakeLogin(status: .enabled)
         login.startJobFromRegister(2) // macOS refuses the first registration of a new build
-        XCTAssertEqual(LoginItem.renew(login, sourceInstall: false, bundled: true, self: 1, within: 1, retry: 0),
-                       .running)
+        XCTAssertEqual(LoginItem.renew(login, self: 1, within: 1, retry: 0), .running)
         XCTAssertEqual(login.calls, ["unregister", "register", "unregister", "register"])
 
         let stuck = FakeLogin(status: .enabled)
         stuck.neverStartJob()
-        guard case .failed = LoginItem.renew(stuck, sourceInstall: false, bundled: true, self: 1, within: 0.2,
-                                             retry: 0) else {
+        guard case .failed = LoginItem.renew(stuck, self: 1, within: 0.2, retry: 0) else {
             return XCTFail("a job that never starts fails after one retry")
         }
         XCTAssertEqual(stuck.calls.filter { $0 == "register" }.count, 2, "only one retry")
@@ -193,8 +182,7 @@ final class LoginItemTests: XCTestCase {
     func testRenewDoesNotRetryAnApproval() {
         let login = FakeLogin(status: .enabled)
         login.needApproval()
-        XCTAssertEqual(LoginItem.renew(login, sourceInstall: false, bundled: true, self: 1, within: 1, retry: 0),
-                       .needsApproval)
+        XCTAssertEqual(LoginItem.renew(login, self: 1, within: 1, retry: 0), .needsApproval)
         XCTAssertEqual(login.calls, ["unregister", "register"])
     }
 

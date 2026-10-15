@@ -41,7 +41,7 @@ Turning Start at Login on from a copy you opened yourself switches to the copy m
 brew upgrade --cask offscreen
 ```
 
-An upgrade stops Offscreen and reinstalls the daemon so that it matches the new CLI. If Start at Login is on, the upgrade then renews it, because macOS won't start an upgraded app from the old registration, and macOS starts the new Offscreen. This can add about 25 seconds to the upgrade. If Start at Login is off, the upgrade leaves it off, and Homebrew reopens Offscreen if it was running. Because the build is ad-hoc signed, macOS may ask again for Local Network, Notifications or Input Monitoring after an upgrade. Grant them as described in [Permissions](#permissions).
+An upgrade stops Offscreen and reinstalls the daemon so that it matches the new CLI. If Start at Login is on, the upgrade then renews it, because macOS won't start an upgraded app from the old registration, and macOS starts the new Offscreen about 25 seconds after brew finishes. If Start at Login is off, the upgrade leaves it off, and Homebrew reopens Offscreen if it was running. Because the build is ad-hoc signed, macOS may ask again for Local Network, Notifications or Input Monitoring after an upgrade. Grant them as described in [Permissions](#permissions).
 
 ### Uninstall
 

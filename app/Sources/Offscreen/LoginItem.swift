@@ -137,21 +137,25 @@ enum LoginItem {
     }
 
     /// The launch flag the Homebrew cask's post-install hook runs on the new
-    /// bundle's executable: see renew.
+    /// bundle's executable: see renewAndExit.
     static let renewFlag = "--renew-start-at-login"
+    /// The detached second half of renewFlag, given the pid to wait for.
+    static let renewAfterFlag = "--renew-start-at-login-after"
 
-    /// Renews Start at Login after an upgrade, for `--renew-start-at-login`.
-    /// The old version's uninstall unloads the login job, but SMAppService
-    /// still reports it enabled, and launchd refuses the new signature until
-    /// the registration is renewed. Returns nil, having changed nothing, when
-    /// Start at Login is off. macOS refuses the first registration of a newly
-    /// installed build, so a failed handover is tried once more after
-    /// `retry` seconds. `say` gets progress for the person running brew.
-    static func renew(_ service: any LoginService, sourceInstall: Bool, bundled: Bool, self pid: Int32 = getpid(),
-                      within seconds: Double = 5, retry: Double = 15,
-                      say: (String) -> Void = { _ in }) -> HandOver? {
-        guard service.status == .enabled, !sourceInstall, bundled else { return nil }
-        say("Renewing Start at Login; this can take about 25 seconds.")
+    /// Whether an upgrade should renew Start at Login: it was on, and this
+    /// is the app's own agent in a bundle.
+    static func shouldRenew(status: LoginStatus, sourceInstall: Bool, bundled: Bool) -> Bool {
+        status == .enabled && !sourceInstall && bundled
+    }
+
+    /// Renews Start at Login after an upgrade. The old version's uninstall
+    /// unloads the login job, and launchd refuses the new signature until
+    /// the registration is renewed. macOS refuses the first registration of
+    /// a newly installed build, so a failed handover is tried once more
+    /// after `retry` seconds. The caller has already decided it was on: by
+    /// now Homebrew may have purged the old bundle and its record with it.
+    static func renew(_ service: any LoginService, self pid: Int32 = getpid(),
+                      within seconds: Double = 5, retry: Double = 15) -> HandOver {
         let first = handOver(service, reregister: true, self: pid, within: seconds)
         guard case .failed(let message) = first else { return first }
         log.notice("start at login: renewal refused, retrying in \(retry)s: \(message, privacy: .public)")
@@ -159,18 +163,45 @@ enum LoginItem {
         return handOver(service, reregister: true, self: pid, within: seconds)
     }
 
-    /// Runs `--renew-start-at-login` before any UI or the single-instance
-    /// check. It always exits 0, so it never fails the brew install.
-    static func renewAndExit() -> Never {
+    /// Runs the renew flags before any UI or the single-instance check, and
+    /// always exits 0, so it never fails the brew install.
+    ///
+    /// Renewing inside the post-install hook is too early: Homebrew moves
+    /// the old bundle into its Caskroom, macOS's background-items record
+    /// follows it, and the purge at the end of the upgrade removes the
+    /// record, so launchd refuses the job ("Missing container for matching
+    /// BTMItem"). So renewFlag only checks that Start at Login is on, while
+    /// that is still readable, and starts a detached copy that waits for
+    /// brew (this process's parent) to exit before renewing.
+    static func renewAndExit(_ arguments: [String] = CommandLine.arguments) -> Never {
         func say(_ message: String) { FileHandle.standardError.write(Data("offscreen: \(message)\n".utf8)) }
-        switch renew(AgentLoginService(), sourceInstall: sourceInstalled(), bundled: bundled(), say: say) {
-        case nil: break
-        case .running: say("Start at Login renewed; Offscreen is running.")
-        case .needsApproval:
-            say("Start at Login needs approval in System Settings > General > Login Items & Extensions.")
-        case .failed(let message):
-            log.error("start at login: renewal failed: \(message, privacy: .public)")
-            say("\(message) Open Offscreen to try again.")
+        if let index = arguments.firstIndex(of: renewAfterFlag), index + 1 < arguments.count,
+           let brew = pid_t(arguments[index + 1]) {
+            _ = SingleInstance.waitForExit([brew], within: 600)
+            // Let Homebrew's purge settle before registering.
+            Thread.sleep(forTimeInterval: 3)
+            switch renew(AgentLoginService()) {
+            case .running: log.notice("start at login: renewed after upgrade")
+            case .needsApproval: log.notice("start at login: renewed, needs approval")
+            case .failed(let message): log.error("start at login: renewal failed: \(message, privacy: .public)")
+            }
+            exit(0)
+        }
+        guard shouldRenew(status: AgentLoginService().status, sourceInstall: sourceInstalled(),
+                          bundled: bundled()) else { exit(0) }
+        let child = Process()
+        child.executableURL = Bundle.main.executableURL
+        child.arguments = [renewAfterFlag, String(getppid())]
+        // Its own stdio, so brew doesn't wait for it.
+        child.standardInput = FileHandle.nullDevice
+        child.standardOutput = FileHandle.nullDevice
+        child.standardError = FileHandle.nullDevice
+        do {
+            try child.run()
+            say("Start at Login is on; Offscreen renews it and starts once brew finishes (about 25 seconds).")
+        } catch {
+            log.error("start at login: couldn't start the renewal: \(error, privacy: .public)")
+            say("Couldn't renew Start at Login: \(error.localizedDescription). Open Offscreen to try again.")
         }
         exit(0)
     }
