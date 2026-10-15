@@ -85,14 +85,12 @@ import SwiftUI
         daemonVersion = nil
         startDeadline = Date().addingTimeInterval(15)
         let control = self.control
-        Task.detached {
+        Task {
             do {
-                try control.start()
+                try await Blocking.run { try control.start() }
             } catch {
-                await MainActor.run {
-                    self.startDeadline = .distantPast
-                    self.daemon = .notResponding("\(error)")
-                }
+                startDeadline = .distantPast
+                daemon = .notResponding("\(error)")
             }
         }
     }
@@ -113,7 +111,7 @@ import SwiftUI
     func shutDown(verb: String, systemQuit: Bool) async -> Bool {
         controlling = true
         let bridge = self.bridge
-        let active = await Task.detached { (try? bridge.jobs())?.filter(\.active) ?? [] }.value
+        let active = ((try? await Blocking.run { try bridge.jobs() }) ?? []).filter(\.active)
         if !active.isEmpty && !systemQuit {
             let detail = "\(verb == "Quit" ? "Quitting Offscreen" : "Restarting") stops the daemon. Cancelled jobs stop and their VM clones are deleted."
             guard ask(QuitPrompt.message(verb: verb, count: active.count), detail: detail,
@@ -124,25 +122,27 @@ import SwiftUI
         }
         daemon = verb == "Quit" ? .stopping : .restarting
         // Repeat in case a job was submitted while the first pass ran.
-        let failures = await Task.detached { () -> [String] in
-            var failures: [String] = []
-            for _ in 0..<3 {
-                let jobs = (try? bridge.jobs())?.filter(\.active) ?? []
-                if jobs.isEmpty { break }
-                failures = await withTaskGroup(of: String?.self) { group in
-                    for job in jobs {
-                        group.addTask {
-                            do { try bridge.cancel(job.id); return nil } catch { return "\(job.id): \(error)" }
+        var failures: [String] = []
+        for _ in 0..<3 {
+            let jobs = ((try? await Blocking.run { try bridge.jobs() }) ?? []).filter(\.active)
+            if jobs.isEmpty { break }
+            failures = await withTaskGroup(of: String?.self) { group in
+                for job in jobs {
+                    group.addTask {
+                        do {
+                            try await Blocking.run { try bridge.cancel(job.id) }
+                            return nil
+                        } catch {
+                            return "\(job.id): \(error)"
                         }
                     }
-                    var failed: [String] = []
-                    for await failure in group { if let failure { failed.append(failure) } }
-                    return failed
                 }
-                if !failures.isEmpty { break }
+                var failed: [String] = []
+                for await failure in group { if let failure { failed.append(failure) } }
+                return failed
             }
-            return failures
-        }.value
+            if !failures.isEmpty { break }
+        }
         if !failures.isEmpty && !systemQuit {
             guard ask("Some jobs couldn't be cancelled", detail: failures.joined(separator: "\n"),
                       confirm: "\(verb) Anyway", decline: "Don't \(verb)") else {
@@ -151,10 +151,11 @@ import SwiftUI
             }
         }
         let control = self.control
-        let stopError = await Task.detached { () -> String? in
-            do { try control.stop(); return nil } catch { return "\(error)" }
-        }.value
-        if let stopError { daemon = .notResponding(stopError) }
+        do {
+            try await Blocking.run { try control.stop() }
+        } catch {
+            daemon = .notResponding("\(error)")
+        }
         status = nil
         jobs = JobList()
         countdownPanel?.hide()
@@ -180,43 +181,40 @@ import SwiftUI
         setSensing(sense)
         let tapReady = eventTap.map { CFMachPortIsValid($0) && CGEvent.tapIsEnabled(tap: $0) } ?? false
         let bridge = self.bridge
-        Task.detached {
+        Task {
             do {
-                let state = sense
-                    ? try bridge.request("/host/snapshot", snapshot: Sensors.snapshot(eventTapReady: tapReady))
-                    : try bridge.request("/host/status")
-                let jobs = try bridge.jobs()
-                let version = needVersion ? try bridge.version() : nil
-                await MainActor.run {
-                    self.refreshing = false
-                    // A reply that raced a quit or restart is stale.
-                    guard !self.controlling else { return }
-                    if let version { self.daemonVersion = version }
-                    if let current = self.daemonVersion {
-                        self.assign(\.daemon, DaemonState.reachable(daemon: current.version, app: self.appBuild))
-                    }
-                    self.hostActive = HostSensing.hostActive(state)
-                    self.update(state)
-                    self.updateJobs(jobs)
-                    // Send the first snapshot now rather than on the next
-                    // heartbeat so admission isn't delayed by the switch.
-                    if self.refreshAfterInput || HostSensing.needed(hostActive: self.hostActive, probe: self.probe) != sense {
-                        self.refreshAfterInput = false
-                        self.refresh()
-                    }
+                let (state, jobs, version) = try await Blocking.run { () throws -> (HostStatus, [DaemonJob], DaemonVersion?) in
+                    let state = sense
+                        ? try bridge.request("/host/snapshot", snapshot: Sensors.snapshot(eventTapReady: tapReady))
+                        : try bridge.request("/host/status")
+                    return (state, try bridge.jobs(), needVersion ? try bridge.version() : nil)
+                }
+                refreshing = false
+                // A reply that raced a quit or restart is stale.
+                guard !controlling else { return }
+                if let version { daemonVersion = version }
+                if let current = daemonVersion {
+                    assign(\.daemon, DaemonState.reachable(daemon: current.version, app: appBuild))
+                }
+                hostActive = HostSensing.hostActive(state)
+                update(state)
+                updateJobs(jobs)
+                // Send the first snapshot now rather than on the next
+                // heartbeat so admission isn't delayed by the switch.
+                if refreshAfterInput || HostSensing.needed(hostActive: hostActive, probe: probe) != sense {
+                    refreshAfterInput = false
+                    refresh()
                 }
             } catch {
-                await MainActor.run {
-                    self.refreshing = false
-                    self.refreshAfterInput = false
-                    guard !self.controlling else { return }
-                    self.assign(\.status, nil)
-                    self.assign(\.jobs, JobList())
-                    self.countdownPanel?.hide()
-                    self.daemonVersion = nil
-                    if case .notResponding = self.daemon { return }
-                    if Date() >= self.startDeadline { self.daemon = .notResponding("") }
-                }
+                refreshing = false
+                refreshAfterInput = false
+                guard !controlling else { return }
+                assign(\.status, nil)
+                assign(\.jobs, JobList())
+                countdownPanel?.hide()
+                daemonVersion = nil
+                if case .notResponding = daemon { return }
+                if Date() >= startDeadline { daemon = .notResponding("") }
             }
         }
     }
@@ -282,15 +280,13 @@ import SwiftUI
         guard !cancelling.contains(job.id) else { return }
         cancelling.insert(job.id)
         let bridge = self.bridge
-        Task.detached {
+        Task {
             do {
-                try bridge.cancel(job.id)
-                await MainActor.run { _ = self.cancelling.remove(job.id) }
+                try await Blocking.run { try bridge.cancel(job.id) }
+                cancelling.remove(job.id)
             } catch {
-                await MainActor.run {
-                    self.cancelling.remove(job.id)
-                    self.actionError = "Cancel \(job.name) failed: \(error)"
-                }
+                cancelling.remove(job.id)
+                actionError = "Cancel \(job.name) failed: \(error)"
             }
         }
     }
@@ -334,19 +330,15 @@ import SwiftUI
 
     func action(_ name: String, job: String = "") {
         let bridge = self.bridge
-        Task.detached {
+        Task {
             do {
-                let state = try bridge.request("/host/\(name)" + (job.isEmpty ? "" : "/\(job)"))
-                await MainActor.run {
-                    self.actionError = nil
-                    self.update(state)
-                }
+                let state = try await Blocking.run { try bridge.request("/host/\(name)" + (job.isEmpty ? "" : "/\(job)")) }
+                actionError = nil
+                update(state)
             } catch {
-                await MainActor.run {
-                    if name == "return", self.pendingReturn == job { self.pendingReturn = "" }
-                    self.actionError = "\(name == "not-now" ? "Not now" : name == "take-back" ? "Take back" : "Host action") failed: \(error)"
-                    if let status = self.status { self.updateCountdownPanel(status) }
-                }
+                if name == "return", pendingReturn == job { pendingReturn = "" }
+                actionError = "\(name == "not-now" ? "Not now" : name == "take-back" ? "Take back" : "Host action") failed: \(error)"
+                if let status { updateCountdownPanel(status) }
             }
         }
     }
