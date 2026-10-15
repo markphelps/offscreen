@@ -15,7 +15,7 @@ Run from a directory under a repo containing `.offscreen.toml`, or pass `--workt
 | `offscreen image build` / `offscreen image refresh` | Build a golden image; refresh pulls the base image again before rebuilding. Shows each step on stderr and prints only the new image name on stdout; see [Image build output](#image-build-output). |
 | `offscreen image ls` | List golden images, newest first, with build date and size. `*` in the CURRENT column marks `current_image`. |
 | `offscreen image prune` | Delete golden images other than `current_image`. Only names `image build` produces are selected; running images are skipped. Refuses if `current_image` is missing from Tart, or (when deleting) while a VM job is active. Asks first; see [Prune](#prune). |
-| `offscreen daemon install` / `offscreen daemon uninstall` | Register/start or stop/remove the user's daemon LaunchAgent. |
+| `offscreen daemon install` / `offscreen daemon uninstall` | Low-level: register/start or stop/remove only the daemon LaunchAgent. `mise run install` and `mise run uninstall` already run these; use **Restart Daemon** in the Offscreen menu to restart. |
 | `offscreen version` | Print this client's build version and protocol, then the daemon's. See [Versions](#versions). |
 
 ## List output

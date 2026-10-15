@@ -35,7 +35,7 @@ Offscreen queues GUI and UI-test jobs from agents and scripts, then runs them in
 
 ## Gotchas
 
-- Rebuilding the CLI doesn't restart the running daemon. `offscreen daemon install` (or `mise run install`) and Restart Daemon in the Offscreen menu do. The app starts the daemon at launch and stops it at quit; its LaunchAgent has no `RunAtLoad`/`KeepAlive`.
+- Rebuilding the CLI doesn't restart the running daemon. `mise run install` (`scripts/install.sh`, which installs CLI, daemon and app together) and Restart Daemon in the Offscreen menu do. The app starts the daemon at launch and stops it at quit; the daemon's LaunchAgent has no `RunAtLoad`/`KeepAlive`.
 - The guardian restores `GOCOVERDIR` after the task exits so coverage warnings stay out of task output (`internal/run/process.go`). CI guards this with `go test ./internal/run -cover -count=1`.
 - GitHub-hosted runners can't run Tart VMs. Run end-to-end checks locally with `examples/hello`. Isolate local runs with `OFFSCREEN_STATE_DIR` and `OFFSCREEN_CONFIG`.
 - Example Xcode builds set `COMPILER_INDEX_STORE_ENABLE=NO` because VirtioFS doesn't support index-store atomic renames.
@@ -45,5 +45,5 @@ Offscreen queues GUI and UI-test jobs from agents and scripts, then runs them in
 
 - `ARCHITECTURE.md`: components, job lifecycle, admission rules, invariants.
 - `DAEMON.md`: operations, protocol, upgrades.
-- `CONTRIBUTING.md`: local setup, helper signing, release snapshots.
+- `CONTRIBUTING.md`: local setup, app signing, release snapshots.
 - `docs/cli.md`, `docs/config.md`, `docs/lanes.md`: user-facing behavior.

@@ -16,7 +16,7 @@ flowchart LR
         jobdir[("job dir<br/>stream.bin + artifacts")]
         vmrun["VM runner<br/>internal/run"]
         hostrun["Host runner + guardian<br/>internal/run"]
-        helper["Menu bar app<br/>app/ (Swift)"]
+        app["Offscreen menu bar app<br/>app/ (Swift)"]
         tart["Tart CLI<br/>internal/tart"]
         desktop["Real desktop"]
     end
@@ -36,7 +36,8 @@ flowchart LR
     tart --> guest
     vmrun -- "tar + SSH" --> cmd
     hostrun --> desktop
-    helper -- "snapshots, Not now,<br/>Take back" --> daemon
+    app -- "jobs, cancel, snapshots,<br/>Not now, Take back" --> daemon
+    app -- "launchctl kickstart / SIGTERM" --> daemon
 ```
 
 `offscreen image build` runs in the CLI, not the daemon. It clones the base image with Tart, checks the guest's GUI session, and records the result as `current_image` in the user config. `internal/image` reports each step through an `internal/progress` sink and streams command output to the renderer, a build log beside the config, and a bounded failure tail. Older images stay in Tart until `offscreen image prune` deletes them. It only selects names `image build` produces, always keeps `current_image` (and refuses if Tart doesn't list it), skips running images, and refuses to delete while a VM job is past the queue (it proceeds if the daemon is not running). A lock file beside the config serializes prune against `image build` publishing a new image.
@@ -67,7 +68,7 @@ sequenceDiagram
 
 The job stream is a sequence of frames: a kind byte, a big-endian 4-byte length, and the payload. `stream.bin` holds only stdout (`o`) and stderr (`e`) frames, which is all `offscreen logs` replays. A stream request with `?phases=1` also gets phase frames (`p`, a JSON state, reason and time) for each non-terminal state change, in order with the output. The daemon keeps recent phases in memory only and sends them only on request, so a client from before phase frames, which rejects unknown kinds, never sees one. A client asks for phases only when `GET /version` lists the `phases` feature; a daemon from before version negotiation answers 404 there, so the client streams output only. Every client request carries its protocol in `X-Offscreen-Protocol`; see [versions and upgrades](DAEMON.md#versions-and-upgrades).
 
-The host lane follows the same flow without Tart. The task runs in the real checkout under a guardian process, and `[guest] setup` is skipped. Admission waits for fresh helper observations: idle long enough, unlocked and awake, camera and mic off, and not paused. A ten-second countdown comes first.
+The host lane follows the same flow without Tart. The task runs in the real checkout under a guardian process, and `[guest] setup` is skipped. Admission waits for fresh observations from the Offscreen app: idle long enough, unlocked and awake, camera and mic off, and not paused. A ten-second countdown comes first.
 
 ## Job states
 
@@ -117,7 +118,7 @@ A failing test ends as `done` with the test's exit code. `failed` means offscree
 | `internal/tart`, `internal/guest` | Tart CLI and SSH adapters |
 | `internal/image` | Golden image build and guest checks |
 | `internal/config` | User config, atomic `current_image` updates |
-| `app/` | Swift menu bar app: sensors, input filter, countdown, notifications |
+| `app/` | Offscreen menu bar app: daemon lifecycle, jobs menu, sensors, input filter, countdown, notifications |
 
 ## Invariants
 

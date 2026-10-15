@@ -69,7 +69,7 @@ These affect the user's machine, desktop, or shared state. Don't run them withou
 - `--show`: opens the VM in a window that may take focus. That defeats the point.
 - `--lane host`, or any task with `lane = "host"`: runs on the user's real desktop when they're idle.
 - `--keep`: keeps a failed VM, which holds one of the two VM slots until `offscreen cancel <job>`. If you use it, cancel the job when you're done inspecting.
-- `offscreen pause` / `resume`, `prune`, `image build`, `image refresh`, `image prune`, `daemon install`, `daemon uninstall`.
+- `offscreen pause` / `resume`, `prune`, `image build`, `image refresh`, `image prune`, `daemon install`, `daemon uninstall`, and opening, quitting or restarting the Offscreen app (quitting cancels its jobs).
 - Editing the user config at `~/Library/Application Support/offscreen/config.toml`.
 
 ## Troubleshooting

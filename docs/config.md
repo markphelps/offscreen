@@ -57,7 +57,7 @@ Every task gets `OFFSCREEN_OUT` (write screenshots and test results here), `OFFS
 
 ## User config
 
-The file is optional; missing settings use the defaults below. `OFFSCREEN_CONFIG` overrides its path for the client and daemon (set it before `offscreen daemon install` to carry it into launchd). The daemon reads its settings at startup; reinstall/restart it to pick up changes. The exception is `current_image`, which it rereads for each VM job, so a new `offscreen image build` takes effect without a restart. `OFFSCREEN_STATE_DIR` overrides state/socket and job/cache directories (use a short, owner-only path to fit Unix socket length limits).
+The file is optional; missing settings use the defaults below. `OFFSCREEN_CONFIG` overrides its path for the client and daemon (set it before `mise run install` to carry it into the daemon's LaunchAgent). The daemon reads its settings at startup; choose **Restart Daemon** in the Offscreen menu to pick up changes. The exception is `current_image`, which it rereads for each VM job, so a new `offscreen image build` takes effect without a restart. `OFFSCREEN_STATE_DIR` overrides state/socket and job/cache directories (use a short, owner-only path to fit Unix socket length limits).
 
 ```toml
 # ~/Library/Application Support/offscreen/config.toml
@@ -81,7 +81,7 @@ ssh_password = "admin"
 | --- | --- | --- |
 | `current_image` | Empty | Golden image name consumed by VM jobs. `image build`/`image refresh` records it after a successful build. |
 | `idle_threshold` | `5m` | Required inactivity before host-lane admission; Go duration string. |
-| `grace` | `1m` | Time from detected/manual return before a host job is requeued if the desktop is still in use or the helper signal is stale. |
+| `grace` | `1m` | Time from detected/manual return before a host job is requeued if the desktop is still in use or the Offscreen app's signal is stale. |
 | `vm_slots` | `2` | VM concurrency limit; Apple's license allows no more than two macOS guests on one host. |
 | `low_memory_threshold_gb` | `8` | When available memory is below this threshold, admit only one VM job. |
 | `job_retention` | `168h` (seven days) | How long the daemon keeps a completed job's record, stream log and artifacts after it finished. Must be a positive Go duration string such as `24h` or `720h`; `0`, negative values and non-string values are rejected, so automatic cleanup cannot be disabled by accident. The daemon expires older jobs at startup and then every hour; see [DAEMON.md](../DAEMON.md). Read at daemon startup; restart the daemon after changing it. |

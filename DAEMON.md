@@ -31,6 +31,7 @@ flowchart LR
 ```
 
 - The LaunchAgent carries `OFFSCREEN_CONFIG`, `OFFSCREEN_STATE_DIR` (if set) and the installer's `PATH`, so launchd can find Tart.
+- `mise run install` (`scripts/install.sh`) runs this step between building and starting the Offscreen app. Run it by hand only after rebuilding `offscreend` yourself.
 - **Reinstall after rebuilding `offscreend`.**
 - `offscreen daemon uninstall` stops the service and removes only its LaunchAgent plist. The bundle stays.
 - Install starts the daemon once so it can check that it answers. After that, the Offscreen app starts and stops it.
@@ -91,7 +92,7 @@ A `job-*` clone counts as owned only if it matches a recorded job, or its 16-hex
 
 ## Versions and upgrades
 
-`offscreen` and `offscreend` are separate binaries and upgrade separately. Rebuilding or reinstalling the CLI does not restart the running daemon. `offscreen daemon install` (which `mise run install` runs), Restart Daemon in the Offscreen menu, or quitting and reopening Offscreen does. So a new client can talk to an older daemon, and an older client to a new one.
+`offscreen` and `offscreend` are separate binaries and upgrade separately. Rebuilding or reinstalling the CLI does not restart the running daemon. `mise run install`, Restart Daemon in the Offscreen menu, or quitting and reopening Offscreen does. So a new client can talk to an older daemon, and an older client to a new one.
 
 The socket API has an integer protocol version, `daemon.ProtocolVersion`. It goes up whenever the API gains or changes behavior. A daemon from before version negotiation is protocol 0. `GET /version` returns the daemon's protocol, its build version, and the opt-in features it supports, such as `phases`. A protocol 0 daemon answers 404, which the client reads as protocol 0 with no features. The build version (set at build time; `dev` for a plain `go build`) is for diagnostics only. Compatibility is decided by the protocol number and features, never by the build string.
 
@@ -123,7 +124,7 @@ flowchart LR
 
 ## Host lane
 
-The host lane needs the [menu bar helper](app/README.md). `offscreen pause` and `offscreen resume` work without it.
+The host lane needs the [Offscreen menu bar app](app/README.md) to report the desktop's state. `offscreen pause` and `offscreen resume` work without those reports.
 
 ```mermaid
 stateDiagram-v2
@@ -133,7 +134,7 @@ stateDiagram-v2
     countdown --> running: 10 s elapse
     running --> grace: you return
     grace --> running: idle again
-    grace --> requeued: Take back now, or grace expires<br/>while desktop claimed / helper stale
+    grace --> requeued: Take back now, or grace expires<br/>while desktop claimed / app signal stale
     running --> [*]: job ends
     requeued --> waiting: after process-group cleanup,<br/>at the front of the queue
 ```
@@ -142,7 +143,7 @@ A job waits, with its reason shown in `offscreen status`, until all of these hol
 
 | Gate | Fails when |
 | --- | --- |
-| Helper | Absent, or heartbeat older than 3 s |
+| Offscreen app | Absent, or heartbeat older than 3 s |
 | Permissions | Input Monitoring or the event tap is unavailable |
 | Session | Locked, or display asleep |
 | Privacy | Camera or microphone in use |
@@ -150,10 +151,10 @@ A job waits, with its reason shown in `offscreen status`, until all of these hol
 | Policy | Paused, or a **Not now** hold is active |
 
 - **Pause and Not now persist** in SQLite before they're acknowledged, and they survive restarts. `offscreen resume` clears both. A failed write stops admission.
-- **On return:** a job that is still preparing stops at once, so it can't start a GUI task. A running job gets the `grace` period. At grace expiry it is also requeued if the desktop is still claimed or the helper's heartbeat is stale.
+- **On return:** a job that is still preparing stops at once, so it can't start a GUI task. A running job gets the `grace` period. At grace expiry it is also requeued if the desktop is still claimed or the app's heartbeat is stale.
 - **Requeued jobs get closed stdin.** Use detached host jobs if a task may be interrupted.
 - `idle_threshold` and `grace` are read at startup. Restart the daemon after changing them.
-- Automatic return detection is off until you run the [helper probe](app/README.md) and enable `VerifiedInputFilter`. A permission denial is not evidence either way.
+- Automatic return detection is off until you run the [input probe](app/README.md#input-discrimination-probe) and enable `VerifiedInputFilter`. A permission denial is not evidence either way.
 
 ### Guardian recovery
 

@@ -7,20 +7,12 @@ goreleaser = "2.17.1"
 # Tasks are named <verb> or <verb>:<part>. Each bare verb runs all its parts.
 
 [tasks.install]
-description = "Install the CLI, daemon and Offscreen menu bar app"
-run = [{ task = "install:go" }, { task = "install:helper" }]
-
-[tasks."install:go"]
-description = "Install offscreen and offscreend in ~/.local/bin (or $OFFSCREEN_BIN_DIR) and start the daemon"
+description = "Build and install the CLI, daemon and Offscreen menu bar app, then start Offscreen"
 run = "scripts/install.sh"
 
-[tasks."install:helper"]
-description = "Bundle the Offscreen menu bar app and install its LaunchAgent"
-run = [{ task = "build:app" }, "app/scripts/install.sh"]
-
 [tasks.uninstall]
-description = "Remove the daemon, menu bar app and installed binaries"
-run = ["scripts/install.sh uninstall", "app/scripts/install.sh uninstall"]
+description = "Remove Offscreen.app, the daemon, their LaunchAgents and the installed binaries"
+run = "scripts/install.sh uninstall"
 
 [tasks.build]
 description = "Build everything without installing"
