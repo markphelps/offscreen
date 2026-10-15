@@ -5,3 +5,4 @@ bin/
 dist/
 app/.build/
 docs/records/
+.agents
