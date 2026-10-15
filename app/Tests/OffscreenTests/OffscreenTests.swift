@@ -1,8 +1,8 @@
 import CoreGraphics
 import XCTest
-@testable import OffscreenHelper
+@testable import Offscreen
 
-final class HelperTests: XCTestCase {
+final class OffscreenTests: XCTestCase {
     /// Renders the menu bar icon at Retina scale, one pixel per design unit.
     private func menuBarAlpha(running: Bool) -> (Int, Int) -> CGFloat {
         let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 46, pixelsHigh: 38, bitsPerSample: 8,

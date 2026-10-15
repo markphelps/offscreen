@@ -34,7 +34,7 @@ func TestHostGatePredicatesCountdownInputNotNowPauseResume(t *testing.T) {
 	s.ConfigureHostController()
 	job := submitFixture(t, client, root, Request{Lane: project.LaneHost, Argv: []string{"/bin/echo", "hello"}, Detach: true})
 	require.Eventually(t, func() bool { return s.hostStatus().Queued == 1 }, time.Second, 10*time.Millisecond)
-	require.Equal(t, "waiting for menu bar helper (signal unavailable)", gateReason(s, job))
+	require.Equal(t, "waiting for the Offscreen menu bar app (signal unavailable)", gateReason(s, job))
 	good := HostSnapshot{IdleSeconds: 35, Unlocked: true, DisplayAwake: true, CameraIdle: true, MicrophoneIdle: true, InputMonitoring: true, EventTapReady: true}
 	cases := []struct {
 		name     string

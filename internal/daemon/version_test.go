@@ -125,7 +125,7 @@ func TestDaemonServesRequestsWithoutProtocolHeader(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	var jobs []Job
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&jobs))
-	// The menu bar helper also sends no header.
+	// The menu bar app also sends no header.
 	resp = legacyGet(t, client, "/host/status")
 	_ = resp.Body.Close()
 }

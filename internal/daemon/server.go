@@ -550,7 +550,7 @@ func (s *Server) failLocked(err error) error {
 	return err
 }
 
-// PauseHost and ResumeHost are the control seam for the idle-gate helper.
+// PauseHost and ResumeHost are the control seam for the menu bar app.
 func (s *Server) PauseHost() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

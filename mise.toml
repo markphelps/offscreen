@@ -7,7 +7,7 @@ goreleaser = "2.17.1"
 # Tasks are named <verb> or <verb>:<part>. Each bare verb runs all its parts.
 
 [tasks.install]
-description = "Install the CLI, daemon and menu bar helper"
+description = "Install the CLI, daemon and Offscreen menu bar app"
 run = [{ task = "install:go" }, { task = "install:helper" }]
 
 [tasks."install:go"]
@@ -15,36 +15,36 @@ description = "Install offscreen and offscreend in ~/.local/bin (or $OFFSCREEN_B
 run = "scripts/install.sh"
 
 [tasks."install:helper"]
-description = "Bundle the menu bar helper and install its LaunchAgent"
-run = [{ task = "build:helper" }, "helper/scripts/install.sh"]
+description = "Bundle the Offscreen menu bar app and install its LaunchAgent"
+run = [{ task = "build:app" }, "app/scripts/install.sh"]
 
 [tasks.uninstall]
-description = "Remove the daemon, helper and installed binaries"
-run = ["scripts/install.sh uninstall", "helper/scripts/install.sh uninstall"]
+description = "Remove the daemon, menu bar app and installed binaries"
+run = ["scripts/install.sh uninstall", "app/scripts/install.sh uninstall"]
 
 [tasks.build]
 description = "Build everything without installing"
-run = [{ task = "build:go" }, { task = "build:helper" }]
+run = [{ task = "build:go" }, { task = "build:app" }]
 
 [tasks."build:go"]
 description = "Build bin/offscreen and bin/offscreend"
 run = "mkdir -p bin && go build -o bin/offscreen ./cmd/offscreen && go build -o bin/offscreend ./cmd/offscreend && go build ./..."
 
-[tasks."build:helper"]
-description = "Build and bundle the menu bar helper into helper/.build"
-run = "swift build --package-path helper && helper/scripts/bundle.sh"
+[tasks."build:app"]
+description = "Build and bundle the Offscreen menu bar app into app/.build"
+run = "swift build --package-path app && app/scripts/bundle.sh"
 
 [tasks.test]
 description = "Run all tests"
-run = [{ task = "test:go" }, { task = "test:helper" }]
+run = [{ task = "test:go" }, { task = "test:app" }]
 
 [tasks."test:go"]
 description = "Run Go tests"
 run = "go test ./..."
 
-[tasks."test:helper"]
-description = "Unit-test the Swift helper (no bundling, install or permissions)"
-run = "swift build --package-path helper && swift test --package-path helper"
+[tasks."test:app"]
+description = "Unit-test the Swift menu bar app (no bundling, install or permissions)"
+run = "swift build --package-path app && swift test --package-path app"
 
 [tasks.lint]
 description = "Run all linters"

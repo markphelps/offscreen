@@ -112,7 +112,7 @@ Useful `run` flags: `--detach` returns right away, `--keep` keeps a failed VM fo
 
 ## Jobs that need real hardware
 
-Some checks can't run in a VM. A task with `lane = "host"` runs on your actual desktop, one job at a time, and only when you're idle: the screen must be unlocked and awake, the camera and microphone off, and you away for long enough. A countdown lets you say **Not now** first. If you come back mid-job, a notification lets you take the desktop back. This lane needs a separate [menu bar helper](helper/README.md), and automatic return detection stays off until you check it on your Mac. Read [lanes and safety](docs/lanes.md) before turning it on.
+Some checks can't run in a VM. A task with `lane = "host"` runs on your actual desktop, one job at a time, and only when you're idle: the screen must be unlocked and awake, the camera and microphone off, and you away for long enough. A countdown lets you say **Not now** first. If you come back mid-job, a notification lets you take the desktop back. This lane needs a separate [menu bar helper](app/README.md), and automatic return detection stays off until you check it on your Mac. Read [lanes and safety](docs/lanes.md) before turning it on.
 
 ## Learn more
 

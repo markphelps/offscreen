@@ -6,9 +6,9 @@ Offscreen queues GUI and UI-test jobs from agents and scripts, then runs them in
 
 - Contributor tools are pinned in `mise.toml`. Users build with plain Go, so don't make mise a build requirement. Put personal settings in the ignored `mise.local.toml`.
 - Before committing, run `mise run fmt` (it edits files, so check the diff) and then `mise run check` (lint, test, build).
-- Name tasks `<verb>` or `<verb>:<part>`, where the part is `go`, `helper` or `sh`. A bare verb runs all its parts.
+- Name tasks `<verb>` or `<verb>:<part>`, where the part is `go`, `app` or `sh`. A bare verb runs all its parts.
 - Go tests need a Mac because `internal/run`'s guardian is darwin-only. Lint works anywhere with `GOOS=darwin`.
-- `mise run test:helper` needs Swift 6.2+.
+- `mise run test:app` needs Swift 6.2+.
 
 ## Map
 
@@ -16,7 +16,7 @@ Offscreen queues GUI and UI-test jobs from agents and scripts, then runs them in
 - `cmd/offscreend` + `internal/daemon`: daemon with SQLite state, the scheduler, and an HTTP/JSON API on an owner-only Unix socket.
 - `internal/run`: VM and host execution, the host guardian, artifacts. `internal/tart` and `internal/guest` wrap the Tart CLI and SSH.
 - `internal/image`: golden image build and prune. Runs in the CLI, not the daemon.
-- `helper/`: Swift menu bar app (separate SwiftPM package). Not shipped by GoReleaser.
+- `app/`: Swift menu bar app, Offscreen.app (separate SwiftPM package). Not shipped by GoReleaser.
 - `skills/offscreen/SKILL.md`: user-facing agent skill. Update it when CLI behavior or exit codes change.
 - `examples/hello`: end-to-end Tart/XCUITest example.
 
@@ -39,7 +39,7 @@ Offscreen queues GUI and UI-test jobs from agents and scripts, then runs them in
 - The guardian restores `GOCOVERDIR` after the task exits so coverage warnings stay out of task output (`internal/run/process.go`). CI guards this with `go test ./internal/run -cover -count=1`.
 - GitHub-hosted runners can't run Tart VMs. Run end-to-end checks locally with `examples/hello`. Isolate local runs with `OFFSCREEN_STATE_DIR` and `OFFSCREEN_CONFIG`.
 - Example Xcode builds set `COMPILER_INDEX_STORE_ENABLE=NO` because VirtioFS doesn't support index-store atomic renames.
-- Swift unit tests don't prove sensor, event-tap or permission behavior. Host-lane changes need a manual check on a real Mac (`helper/README.md`).
+- Swift unit tests don't prove sensor, event-tap or permission behavior. Host-lane changes need a manual check on a real Mac (`app/README.md`).
 
 ## Deeper docs
 

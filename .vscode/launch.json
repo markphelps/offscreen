@@ -4,21 +4,21 @@
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder}/helper",
-            "name": "Debug OffscreenHelper (helper)",
-            "target": "OffscreenHelper",
+            "cwd": "${workspaceFolder}/app",
+            "name": "Debug Offscreen (app)",
+            "target": "Offscreen",
             "configuration": "debug",
-            "preLaunchTask": "swift: Build Debug OffscreenHelper (helper)"
+            "preLaunchTask": "swift: Build Debug Offscreen (app)"
         },
         {
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder}/helper",
-            "name": "Release OffscreenHelper (helper)",
-            "target": "OffscreenHelper",
+            "cwd": "${workspaceFolder}/app",
+            "name": "Release Offscreen (app)",
+            "target": "Offscreen",
             "configuration": "release",
-            "preLaunchTask": "swift: Build Release OffscreenHelper (helper)"
+            "preLaunchTask": "swift: Build Release Offscreen (app)"
         }
     ]
 }

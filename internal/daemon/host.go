@@ -12,7 +12,7 @@ import (
 	"github.com/markphelps/offscreen/internal/run"
 )
 
-// The helper supplies a fresh, complete observation. Unknown or stale signals
+// The menu bar app supplies a fresh, complete observation. Unknown or stale signals
 // fail closed. The daemon never makes UI/IO calls while its scheduler lock is held.
 type HostSnapshot struct {
 	IdleSeconds     float64 `json:"idle_seconds"`
@@ -69,7 +69,7 @@ func (s *Server) hostGateSnapshot(_ context.Context, job Job) (bool, string) {
 		return false, reason
 	}
 	if h.seen.IsZero() || now.Sub(h.seen) > 3*time.Second {
-		return reset("waiting for menu bar helper (signal unavailable)", false)
+		return reset("waiting for the Offscreen menu bar app (signal unavailable)", false)
 	}
 	a := h.snapshot
 	if !a.InputMonitoring {

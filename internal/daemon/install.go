@@ -16,9 +16,12 @@ import (
 )
 
 const (
-	Label      = "dev.offscreen.offscreend"
-	bundleName = "OffscreenDaemon.app"
-	lsregister = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+	Label = "io.latentsignal.offscreend"
+	// legacyLabel is the daemon's label before the rename. Install stops and
+	// removes that LaunchAgent and accepts its bundle as offscreen's own.
+	legacyLabel = "dev.offscreen.offscreend"
+	bundleName  = "OffscreenDaemon.app"
+	lsregister  = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 )
 
 type commandRunner func(string, ...string) ([]byte, error)
@@ -101,7 +104,7 @@ func plistValue(data []byte, key string) (string, error) {
 	}
 }
 
-func ownedPlist(path string) ([]byte, error) {
+func ownedPlist(path, label string) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -109,8 +112,8 @@ func ownedPlist(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	label, err := plistValue(data, "Label")
-	if err != nil || label != Label {
+	value, err := plistValue(data, "Label")
+	if err != nil || value != label {
 		return nil, fmt.Errorf("refusing to replace LaunchAgent not owned by Offscreen: %s", path)
 	}
 	return data, nil
@@ -129,7 +132,7 @@ func ownedBundle(path string) (bool, error) {
 		return false, fmt.Errorf("refusing to replace unrecognized bundle %s: %w", path, err)
 	}
 	identifier, err := plistValue(data, "CFBundleIdentifier")
-	if err != nil || identifier != Label {
+	if err != nil || (identifier != Label && identifier != legacyLabel) {
 		return false, fmt.Errorf("refusing to replace bundle not owned by Offscreen: %s", path)
 	}
 	return true, nil
@@ -146,15 +149,15 @@ func runCommand(run commandRunner, name string, args ...string) error {
 // A missing *service* is different from an inaccessible or missing domain.
 // Inspect the named label, never infer its state from bootout's exit code:
 // bootout by plist can return EIO even for a valid, stopped installation.
-func serviceLoaded(run commandRunner, domain string) (bool, error) {
-	target := domain + "/" + Label
+func serviceLoaded(run commandRunner, domain, label string) (bool, error) {
+	target := domain + "/" + label
 	output, err := run("launchctl", "print", target)
 	if err == nil {
 		return true, nil
 	}
 	message := strings.TrimSpace(string(output))
 	missing := strings.TrimSpace(strings.TrimPrefix(message, "Bad request."))
-	if strings.HasPrefix(missing, `Could not find service "`+Label+`" in domain `) {
+	if strings.HasPrefix(missing, `Could not find service "`+label+`" in domain `) {
 		return false, nil
 	}
 	return false, fmt.Errorf("launchctl print %s: %w: %s", target, err, message)
@@ -162,11 +165,11 @@ func serviceLoaded(run commandRunner, domain string) (bool, error) {
 
 const installWait = 15 * time.Second
 
-func waitServiceGone(ctx context.Context, run commandRunner, domain string) error {
+func waitServiceGone(ctx context.Context, run commandRunner, domain, label string) error {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		loaded, err := serviceLoaded(run, domain)
+		loaded, err := serviceLoaded(run, domain, label)
 		if err != nil {
 			return fmt.Errorf("inspect stopped daemon: %w", err)
 		}
@@ -337,7 +340,12 @@ func installWithWait(dir, path, source, domain string, env map[string]string, ru
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	oldPlist, err := ownedPlist(path)
+	oldPlist, err := ownedPlist(path, Label)
+	if err != nil {
+		return err
+	}
+	legacyPath := filepath.Join(filepath.Dir(path), legacyLabel+".plist")
+	legacyPlist, err := ownedPlist(legacyPath, legacyLabel)
 	if err != nil {
 		return err
 	}
@@ -348,12 +356,19 @@ func installWithWait(dir, path, source, domain string, env map[string]string, ru
 	}
 	loadedOld := false
 	if oldPlist != nil {
-		loadedOld, err = serviceLoaded(run, domain)
+		loadedOld, err = serviceLoaded(run, domain, Label)
 		if err != nil {
 			return fmt.Errorf("inspect existing daemon: %w", err)
 		}
 	}
-	if !loadedOld {
+	loadedLegacy := false
+	if legacyPlist != nil {
+		loadedLegacy, err = serviceLoaded(run, domain, legacyLabel)
+		if err != nil {
+			return fmt.Errorf("inspect legacy daemon: %w", err)
+		}
+	}
+	if !loadedOld && !loadedLegacy {
 		// A foreground daemon has no launchd label but can still answer /jobs.
 		// Refuse before staging or publishing rather than stopping that process
 		// or accepting its response as readiness from the new service.
@@ -392,24 +407,50 @@ func installWithWait(dir, path, source, domain string, env map[string]string, ru
 		}
 	}()
 	oldBundle := filepath.Join(backup, bundleName)
-	stoppedOld := false
-	if loadedOld {
-		if err := runCommand(run, "launchctl", "bootout", domain+"/"+Label); err != nil {
-			return restoreRegistration(fmt.Errorf("stop existing daemon: %w", err))
+	stoppedOld, stoppedLegacy := false, false
+	// restartStopped bootstraps the previous services this install stopped.
+	restartStopped := func(cause error) error {
+		if stoppedOld {
+			if err := runCommand(run, "launchctl", "bootstrap", domain, path); err != nil {
+				cause = errors.Join(cause, fmt.Errorf("restart previous daemon: %w", err))
+			}
 		}
-		stoppedOld = true
+		if stoppedLegacy {
+			if err := runCommand(run, "launchctl", "bootstrap", domain, legacyPath); err != nil {
+				cause = errors.Join(cause, fmt.Errorf("restart legacy daemon: %w", err))
+			}
+		}
+		return cause
+	}
+	if loadedOld || loadedLegacy {
 		ctx, cancel := context.WithTimeout(context.Background(), wait)
-		err := waitServiceGone(ctx, run, domain)
-		if err == nil {
-			err = waitOldSocketGone(ctx, dir)
-		}
+		err := func() error {
+			if loadedOld {
+				if err := runCommand(run, "launchctl", "bootout", domain+"/"+Label); err != nil {
+					return fmt.Errorf("stop existing daemon: %w", err)
+				}
+				stoppedOld = true
+				if err := waitServiceGone(ctx, run, domain, Label); err != nil {
+					return fmt.Errorf("wait for previous daemon to stop: %w", err)
+				}
+			}
+			if loadedLegacy {
+				if err := runCommand(run, "launchctl", "bootout", domain+"/"+legacyLabel); err != nil {
+					return fmt.Errorf("stop legacy daemon: %w", err)
+				}
+				stoppedLegacy = true
+				if err := waitServiceGone(ctx, run, domain, legacyLabel); err != nil {
+					return fmt.Errorf("wait for legacy daemon to stop: %w", err)
+				}
+			}
+			if err := waitOldSocketGone(ctx, dir); err != nil {
+				return fmt.Errorf("wait for previous daemon to stop: %w", err)
+			}
+			return nil
+		}()
 		cancel()
 		if err != nil {
-			cause := fmt.Errorf("wait for previous daemon to stop: %w", err)
-			if restartErr := runCommand(run, "launchctl", "bootstrap", domain, path); restartErr != nil {
-				cause = errors.Join(cause, fmt.Errorf("restart previous daemon: %w", restartErr))
-			}
-			return restoreRegistration(cause)
+			return restoreRegistration(restartStopped(err))
 		}
 	}
 	published := false
@@ -419,7 +460,7 @@ func installWithWait(dir, path, source, domain string, env map[string]string, ru
 		// A failed bootstrap can still have loaded a service. Inspect this
 		// label before stopping it; a missing service is benign, other errors
 		// must remain visible to the caller.
-		loaded, err := serviceLoaded(run, domain)
+		loaded, err := serviceLoaded(run, domain, Label)
 		if err != nil {
 			failures = append(failures, fmt.Errorf("inspect failed replacement: %w", err))
 		} else {
@@ -430,7 +471,7 @@ func installWithWait(dir, path, source, domain string, env map[string]string, ru
 			}
 			if len(failures) == 0 {
 				ctx, cancel := context.WithTimeout(context.Background(), wait)
-				err := waitServiceGone(ctx, run, domain)
+				err := waitServiceGone(ctx, run, domain, Label)
 				if err == nil {
 					err = waitOldSocketGone(ctx, dir)
 				}
@@ -462,15 +503,13 @@ func installWithWait(dir, path, source, domain string, env map[string]string, ru
 		if oldPlist != nil {
 			if err := writePlist(path, oldPlist); err != nil {
 				failures = append(failures, fmt.Errorf("restore previous plist: %w", err))
-			} else if stoppedOld {
-				if err := runCommand(run, "launchctl", "bootstrap", domain, path); err != nil {
-					failures = append(failures, fmt.Errorf("restart previous daemon: %w", err))
-				}
+				stoppedOld = false
 			}
 		} else if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			failures = append(failures, err)
 		}
-		return errors.Join(append([]error{cause}, failures...)...)
+		// The legacy plist stays in place until the new daemon is ready.
+		return restartStopped(errors.Join(append([]error{cause}, failures...)...))
 	}
 	if hadBundle {
 		if err := os.Rename(bundle, oldBundle); err != nil {
@@ -497,6 +536,11 @@ func installWithWait(dir, path, source, domain string, env map[string]string, ru
 	if err != nil {
 		return rollback(fmt.Errorf("start daemon LaunchAgent: %w", err))
 	}
+	if legacyPlist != nil {
+		if err := os.Remove(legacyPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove legacy daemon LaunchAgent: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -513,16 +557,23 @@ func Uninstall() error {
 }
 
 func uninstall(path, domain string, run commandRunner) error {
-	old, err := ownedPlist(path)
+	if err := uninstallAgent(path, domain, Label, run); err != nil {
+		return err
+	}
+	return uninstallAgent(filepath.Join(filepath.Dir(path), legacyLabel+".plist"), domain, legacyLabel, run)
+}
+
+func uninstallAgent(path, domain, label string, run commandRunner) error {
+	old, err := ownedPlist(path, label)
 	if err != nil || old == nil {
 		return err
 	}
-	loaded, err := serviceLoaded(run, domain)
+	loaded, err := serviceLoaded(run, domain, label)
 	if err != nil {
 		return fmt.Errorf("inspect daemon LaunchAgent: %w", err)
 	}
 	if loaded {
-		if err := runCommand(run, "launchctl", "bootout", domain+"/"+Label); err != nil {
+		if err := runCommand(run, "launchctl", "bootout", domain+"/"+label); err != nil {
 			return fmt.Errorf("stop daemon LaunchAgent: %w", err)
 		}
 	}

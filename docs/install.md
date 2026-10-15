@@ -21,7 +21,7 @@ This builds `offscreen` and `offscreend` into `~/.local/bin`, adds an `ofs` syml
 
 | Command | What it does |
 | --- | --- |
-| `mise run install` | `install:go`, then builds and installs the [host lane helper](../helper/README.md) (needs Swift 6.2+) |
+| `mise run install` | `install:go`, then builds and installs the [host lane helper](../app/README.md) (needs Swift 6.2+) |
 | `mise run install:go` | CLI and daemon only. Enough for VM jobs. |
 | `mise run install:helper` | Helper only |
 | `mise run uninstall` | Removes the daemon LaunchAgent, the helper, both binaries, and the `ofs` symlink |
@@ -67,4 +67,4 @@ The release binaries are unsigned and unnotarized; the locally installed daemon 
 
 ## Host lane helper
 
-The VM lane needs nothing else. The optional host lane needs the [menu bar helper](../helper/README.md), installed with `mise run install:helper` (or `mise run install`). See [lanes and safety](lanes.md) before enabling it.
+The VM lane needs nothing else. The optional host lane needs the [menu bar helper](../app/README.md), installed with `mise run install:helper` (or `mise run install`). See [lanes and safety](lanes.md) before enabling it.

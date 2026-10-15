@@ -298,7 +298,7 @@ final class NotificationHandler: NSObject, UNUserNotificationCenterDelegate, @un
 
 @MainActor enum AppState { static let model = HostModel() }
 
-@main struct OffscreenHelperApp: App {
+@main struct OffscreenApp: App {
     init() {
         let action = UNNotificationAction(identifier: "TAKE_BACK", title: "Take back now", options: [])
         let category = UNNotificationCategory(identifier: "HOST_RETURN", actions: [action], intentIdentifiers: [])
@@ -350,7 +350,7 @@ final class NotificationHandler: NSObject, UNUserNotificationCenterDelegate, @un
                 Button("Dismiss error") { model.dismissActionError() }
             }
             Divider()
-            Button("Quit Offscreen Helper") { NSApplication.shared.terminate(nil) }
+            Button("Quit Offscreen") { NSApplication.shared.terminate(nil) }
         } label: {
             Image(nsImage: MenuBarIcon.image(running: AppState.model.status?.running != nil))
                 .accessibilityLabel("Offscreen")

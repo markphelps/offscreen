@@ -8,10 +8,10 @@
 | --- | --- | --- |
 | Job database | `~/Library/Application Support/offscreen/jobs.sqlite` | Owner-only. Jobs plus the persisted host pause/Not now policy. |
 | Socket | `~/Library/Application Support/offscreen/offscreend.sock` | Owner-only (`0600`). |
-| Daemon app | `~/Library/Application Support/offscreen/OffscreenDaemon.app` | Bundle ID `dev.offscreen.offscreend`, `LSUIElement`. |
+| Daemon app | `~/Library/Application Support/offscreen/OffscreenDaemon.app` | Bundle ID `io.latentsignal.offscreend`, `LSUIElement`. |
 | Job output | `~/Library/Caches/offscreen/jobs/<id>/` | `stream.bin` (stdout/stderr) and artifacts. |
 | Daemon log | `~/Library/Application Support/offscreen/daemon.log` | The daemon's stderr (`--log-level` / `OFFSCREEN_LOG_LEVEL`). |
-| LaunchAgent | `~/Library/LaunchAgents/dev.offscreen.offscreend.plist` | `RunAtLoad` + `KeepAlive`. Not moved by `OFFSCREEN_STATE_DIR`. |
+| LaunchAgent | `~/Library/LaunchAgents/io.latentsignal.offscreend.plist` | `RunAtLoad` + `KeepAlive`. Not moved by `OFFSCREEN_STATE_DIR`. |
 | Guardian markers | `host-group-*.json` in the state directory | Present only while a host job runs, or after a guardian crash. |
 
 `OFFSCREEN_STATE_DIR` moves everything except the LaunchAgent. Keep it short, because Unix socket paths have a length limit. `OFFSCREEN_CONFIG` selects the user config.
@@ -109,7 +109,7 @@ flowchart LR
 
 ## Host lane
 
-The host lane needs the [menu bar helper](helper/README.md). `offscreen pause` and `offscreen resume` work without it.
+The host lane needs the [menu bar helper](app/README.md). `offscreen pause` and `offscreen resume` work without it.
 
 ```mermaid
 stateDiagram-v2
@@ -139,7 +139,7 @@ A job waits, with its reason shown in `offscreen status`, until all of these hol
 - **On return:** a job that is still preparing stops at once, so it can't start a GUI task. A running job gets the `grace` period. At grace expiry it is also requeued if the desktop is still claimed or the helper's heartbeat is stale.
 - **Requeued jobs get closed stdin.** Use detached host jobs if a task may be interrupted.
 - `idle_threshold` and `grace` are read at startup. Restart the daemon after changing them.
-- Automatic return detection is off until you run the [helper probe](helper/README.md) and enable `VerifiedInputFilter`. A permission denial is not evidence either way.
+- Automatic return detection is off until you run the [helper probe](app/README.md) and enable `VerifiedInputFilter`. A permission denial is not evidence either way.
 
 ### Guardian recovery
 

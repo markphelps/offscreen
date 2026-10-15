@@ -25,8 +25,8 @@ jobs:
         run: mise run lint:sh
 
   # The tests need a Mac: internal/run's process guardian is darwin-only, so
-  # most Go packages' tests do not compile for Linux, and the helper is Swift
-  # for macOS. One job, so a run pays for one macOS runner.
+  # most Go packages' tests do not compile for Linux, and the menu bar app is
+  # Swift for macOS. One job, so a run pays for one macOS runner.
   test:
     # Package.swift needs Swift 6.2; macos-26's default Xcode provides it.
     runs-on: macos-26
@@ -43,6 +43,6 @@ jobs:
       - name: Coverage-instrumented guardian tests
         run: go test ./internal/run -cover -count=1
       # Builds and runs the pure XCTest suite only: no bundle, install or launch.
-      - name: Swift helper build and unit tests
+      - name: Swift app build and unit tests
         if: ${{ !cancelled() }}
-        run: mise run test:helper
+        run: mise run test:app

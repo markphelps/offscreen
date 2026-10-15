@@ -416,11 +416,11 @@ func TestInstallWaitsForOldLabelToDisappear(t *testing.T) {
 func TestWaitServiceGoneDoesNotIgnorePrintFailureOrHang(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 130*time.Millisecond)
 	defer cancel()
-	err := waitServiceGone(ctx, func(string, ...string) ([]byte, error) { return nil, nil }, "gui/501")
+	err := waitServiceGone(ctx, func(string, ...string) ([]byte, error) { return nil, nil }, "gui/501", Label)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	err = waitServiceGone(context.Background(), func(string, ...string) ([]byte, error) {
 		return []byte("Operation not permitted"), errors.New("exit status 1")
-	}, "gui/501")
+	}, "gui/501", Label)
 	require.ErrorContains(t, err, "Operation not permitted")
 }
 
@@ -566,7 +566,7 @@ func TestServiceLoadedRejectsMissingDomainAndPermissionFailures(t *testing.T) {
 	for _, message := range []string{"Could not find domain for user gui: 501", "Operation not permitted", "Could not find service \"another.label\" in domain for user gui: 501"} {
 		loaded, err := serviceLoaded(func(string, ...string) ([]byte, error) {
 			return []byte(message), errors.New("exit status 1")
-		}, "gui/501")
+		}, "gui/501", Label)
 		require.False(t, loaded)
 		require.ErrorContains(t, err, message)
 	}
@@ -583,4 +583,113 @@ func TestInstallRefusesForeignFilesBeforeStoppingService(t *testing.T) {
 	}, readyImmediately)
 	require.ErrorContains(t, err, "not owned")
 	require.False(t, called)
+}
+
+// legacyInstallation writes a pre-rename daemon: its LaunchAgent under the old
+// label and a bundle signed with the old identifier.
+func legacyInstallation(t *testing.T, dir, path string) (string, []byte) {
+	t.Helper()
+	legacy := filepath.Join(filepath.Dir(path), legacyLabel+".plist")
+	old := []byte(`<?xml version="1.0"?><plist><dict><key>Label</key><string>` + legacyLabel + `</string><key>ProgramArguments</key><array><string>legacy</string></array></dict></plist>`)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	require.NoError(t, os.WriteFile(legacy, old, 0o600))
+	bundle := filepath.Join(dir, bundleName, "Contents")
+	require.NoError(t, os.MkdirAll(filepath.Join(bundle, "MacOS"), 0o700))
+	info := strings.ReplaceAll(string(infoPlist()), Label, legacyLabel)
+	require.NoError(t, os.WriteFile(filepath.Join(bundle, "Info.plist"), []byte(info), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(bundle, "MacOS", "offscreend"), []byte("old daemon"), 0o600))
+	return legacy, old
+}
+
+// legacyLaunchd simulates launchd with only the legacy label loaded.
+func legacyLaunchd(failBootstrap *int) (commandRunner, *[]string) {
+	loaded := map[string]bool{legacyLabel: true}
+	var commands []string
+	return func(name string, args ...string) ([]byte, error) {
+		commands = append(commands, name+" "+strings.Join(args, " "))
+		if name != "launchctl" {
+			return nil, nil
+		}
+		switch args[0] {
+		case "print":
+			label := strings.TrimPrefix(args[1], "gui/501/")
+			if !loaded[label] {
+				return []byte("Bad request.\n" + `Could not find service "` + label + `" in domain for user gui: 501`), errors.New("exit status 113")
+			}
+		case "bootout":
+			loaded[strings.TrimPrefix(args[1], "gui/501/")] = false
+		case "bootstrap":
+			if *failBootstrap > 0 {
+				*failBootstrap--
+				return []byte("new daemon rejected"), errors.New("exit status 5")
+			}
+			label := Label
+			if strings.HasSuffix(args[2], legacyLabel+".plist") {
+				label = legacyLabel
+			}
+			loaded[label] = true
+		}
+		return nil, nil
+	}, &commands
+}
+
+func TestInstallMigratesLegacyAgentAndBundle(t *testing.T) {
+	dir, path, source := installerFixture(t)
+	legacy, _ := legacyInstallation(t, dir, path)
+	fail := 0
+	run, commands := legacyLaunchd(&fail)
+	require.NoError(t, install(dir, path, source, "gui/501", nil, run, readyImmediately))
+	joined := strings.Join(*commands, "\n")
+	require.Contains(t, joined, "launchctl bootout gui/501/"+legacyLabel)
+	require.Contains(t, joined, "launchctl bootstrap gui/501 "+path)
+	_, err := os.Stat(legacy)
+	require.ErrorIs(t, err, os.ErrNotExist, "the legacy LaunchAgent is removed")
+	plist, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, Label, mustPlistValue(t, plist, "Label"))
+	metadata, err := os.ReadFile(filepath.Join(dir, bundleName, "Contents", "Info.plist"))
+	require.NoError(t, err)
+	require.Equal(t, Label, mustPlistValue(t, metadata, "CFBundleIdentifier"))
+}
+
+func TestInstallFailureRestartsLegacyAgent(t *testing.T) {
+	dir, path, source := installerFixture(t)
+	legacy, old := legacyInstallation(t, dir, path)
+	fail := 1
+	run, commands := legacyLaunchd(&fail)
+	err := install(dir, path, source, "gui/501", nil, run, readyImmediately)
+	require.ErrorContains(t, err, "new daemon rejected")
+	require.Contains(t, strings.Join(*commands, "\n"), "launchctl bootstrap gui/501 "+legacy)
+	actual, readErr := os.ReadFile(legacy)
+	require.NoError(t, readErr)
+	require.Equal(t, old, actual)
+	_, statErr := os.Stat(path)
+	require.ErrorIs(t, statErr, os.ErrNotExist)
+	binary, readErr := os.ReadFile(filepath.Join(dir, bundleName, "Contents", "MacOS", "offscreend"))
+	require.NoError(t, readErr)
+	require.Equal(t, "old daemon", string(binary))
+}
+
+func TestInstallRefusesForeignLegacyAgent(t *testing.T) {
+	dir, path, source := installerFixture(t)
+	legacy, _ := legacyInstallation(t, dir, path)
+	require.NoError(t, os.WriteFile(legacy, []byte(`<plist><dict><key>Label</key><string>another.agent</string></dict></plist>`), 0o600))
+	called := false
+	err := install(dir, path, source, "gui/501", nil, func(string, ...string) ([]byte, error) {
+		called = true
+		return nil, nil
+	}, readyImmediately)
+	require.ErrorContains(t, err, "not owned")
+	require.False(t, called)
+}
+
+func TestUninstallRemovesLegacyAgent(t *testing.T) {
+	dir, path, _ := installerFixture(t)
+	legacy, _ := legacyInstallation(t, dir, path)
+	fail := 0
+	run, commands := legacyLaunchd(&fail)
+	require.NoError(t, uninstall(path, "gui/501", run))
+	require.Contains(t, strings.Join(*commands, "\n"), "launchctl bootout gui/501/"+legacyLabel)
+	_, err := os.Stat(legacy)
+	require.ErrorIs(t, err, os.ErrNotExist)
 }

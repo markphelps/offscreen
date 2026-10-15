@@ -16,7 +16,7 @@ flowchart LR
         jobdir[("job dir<br/>stream.bin + artifacts")]
         vmrun["VM runner<br/>internal/run"]
         hostrun["Host runner + guardian<br/>internal/run"]
-        helper["Menu bar helper<br/>helper/ (Swift)"]
+        helper["Menu bar app<br/>app/ (Swift)"]
         tart["Tart CLI<br/>internal/tart"]
         desktop["Real desktop"]
     end
@@ -117,7 +117,7 @@ A failing test ends as `done` with the test's exit code. `failed` means offscree
 | `internal/tart`, `internal/guest` | Tart CLI and SSH adapters |
 | `internal/image` | Golden image build and guest checks |
 | `internal/config` | User config, atomic `current_image` updates |
-| `helper/` | Swift menu bar app: sensors, input filter, countdown, notifications |
+| `app/` | Swift menu bar app: sensors, input filter, countdown, notifications |
 
 ## Invariants
 

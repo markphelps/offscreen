@@ -3,5 +3,5 @@ mise.local.toml
 .worktrees/
 bin/
 dist/
-helper/.build/
+app/.build/
 docs/records/

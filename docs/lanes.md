@@ -12,7 +12,7 @@ On daemon restart, orphaned running jobs fail and owned stale VMs are cleaned up
 
 ## Host lane
 
-The host lane runs one task at a time on your real desktop, only after the configured idle threshold and checks for an unlocked, awake session, idle camera and microphone, and an unpaused lane. It requires the separately installed [menu bar helper](../helper/README.md) with Input Monitoring and Notifications. It does **not** require Accessibility permission for the helper (an external input-injection tool may require its own).
+The host lane runs one task at a time on your real desktop, only after the configured idle threshold and checks for an unlocked, awake session, idle camera and microphone, and an unpaused lane. It requires the separately installed [menu bar helper](../app/README.md) with Input Monitoring and Notifications. It does **not** require Accessibility permission for the helper (an external input-injection tool may require its own).
 
 An automatic, nonactivating ten-second countdown offers **Not now** (30-minute durable delay). If the user returns during a job, a notification offers **Take back now**; the default grace period is 60 seconds. Take back cancels the process group and requeues the job at the front only after cleanup. A same-executable guardian sends TERM/KILL and reaps background descendants on normal exit, cancellation, or daemon death. A retried job has closed stdin; use detached host jobs when interruption is possible.
 
@@ -20,7 +20,7 @@ An automatic, nonactivating ten-second countdown offers **Not now** (30-minute d
 
 ### Return detection
 
-**Automatic physical-input return detection is off by default.** The helper's `pid == 0` event filter is a candidate until a physical-versus-injected probe confirms it on *your* Mac. Follow [the probe and manual-return instructions](../helper/README.md) before trusting the host lane with hardware-sensitive work. The helper's permission request or successful build alone is not proof.
+**Automatic physical-input return detection is off by default.** The helper's `pid == 0` event filter is a candidate until a physical-versus-injected probe confirms it on *your* Mac. Follow [the probe and manual-return instructions](../app/README.md) before trusting the host lane with hardware-sensitive work. The helper's permission request or successful build alone is not proof.
 
 ### Crash recovery
 

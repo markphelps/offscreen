@@ -26,7 +26,7 @@ const MinDaemonProtocol = 0
 
 // ProtocolHeader carries the client's ProtocolVersion on every request, so
 // the daemon can log it and, if it ever must, refuse a client with a 4xx.
-// Clients from before negotiation, and the menu bar helper, do not send it.
+// Clients from before negotiation, and the menu bar app, do not send it.
 const ProtocolHeader = "X-Offscreen-Protocol"
 
 // FeaturePhases means GET /jobs/{id}/stream honors PhasesParam.
