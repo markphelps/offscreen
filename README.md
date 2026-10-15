@@ -118,6 +118,14 @@ Useful `run` flags: `--detach` returns right away, `--keep` keeps a failed VM fo
 
 Some checks can't run in a VM. A task with `lane = "host"` runs on your actual desktop, one job at a time, and only when you're idle: the screen must be unlocked and awake, the camera and microphone off, and you away for long enough. A countdown lets you say **Not now** first. If you come back mid-job, a notification lets you take the desktop back. The [Offscreen menu bar app](app/README.md) watches the desktop for this lane; it asks for Input Monitoring only once you queue a host job. Automatic return detection stays off until you check it on your Mac. Read [lanes and safety](docs/lanes.md) before turning it on.
 
+## Built with Offscreen
+
+I use Offscreen to develop and test my three macOS apps:
+
+- [Cove](https://covereader.com): a local-first RSS reader that keeps the full articles you subscribe to.
+- [Vigil](https://vigilmac.com): a menu bar app that keeps your Mac awake while coding agents work.
+- [Ramble](https://ramblemac.com): point at something on screen and talk; your coding agent gets screenshots and a transcript.
+
 ## Learn more
 
 - [Install guide](docs/install.md): Homebrew, building from source, upgrades, and permissions
