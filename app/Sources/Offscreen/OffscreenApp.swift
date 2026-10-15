@@ -103,6 +103,12 @@ import SwiftUI
     // (EX_CONFIG) and accepts the same registration a few seconds later, so
     // a failed handover is tried once more after this long.
     private let handOverRetry: Double
+    // Set while this copy registers and waits for the login job. Restart,
+    // Quit and the checkbox wait for it, so they can't interleave with it.
+    private(set) var handingOver = false
+    // The handover in flight or its pending retry; turning Start at Login
+    // off, quitting and restarting cancel it.
+    private var loginTask: Task<Void, Never>?
 
     init(bridge: any HostBridge = Bridge(socketPath: Bridge.defaultSocket()),
          manualReturn: Bool = UserDefaults.standard.bool(forKey: "ManualReturn"),
@@ -418,7 +424,7 @@ extension HostModel {
     /// process. A daemon that didn't stop is reported, not restarted.
     @discardableResult
     func restart() -> Task<Void, Never>? {
-        guard !controlling else { return nil }
+        guard !controlling, !handingOver else { return nil }
         return Task {
             switch await shutDown(verb: "Restart") {
             case .declined:
@@ -461,6 +467,7 @@ extension HostModel {
     func endSession() async -> Bool {
         sessionEnding = true
         controlling = true
+        loginTask?.cancel()
         closePrompt()
         setDaemon(.stopping)
         countdownPanel?.hide()
@@ -494,6 +501,7 @@ extension HostModel {
     /// to clear.
     func shutDown(verb: String) async -> ShutdownResult {
         controlling = true
+        loginTask?.cancel()
         let bridge = self.bridge
         let active = ((try? await Blocking.run { try bridge.jobs() }) ?? []).filter(\.active)
         if !active.isEmpty {
@@ -557,7 +565,29 @@ extension HostModel {
     /// would rebuild the menu under the pointer.
     func refreshLoginItem() {
         guard openMenus == 0 else { return }
-        assign(\.loginItem, LoginItem.menu(status: login.status, sourceInstall: sourceInstalled(), bundled: bundled))
+        let new = LoginItem.menu(status: login.status, sourceInstall: sourceInstalled(), bundled: bundled)
+        // Approved in System Settings: launchd starts the job's copy now,
+        // which waits for this one, so hand over to it.
+        let approved = loginItem.approve && new.isOn && !new.approve
+        assign(\.loginItem, new)
+        if approved, !startedByAgent, !handingOver, !controlling {
+            loginTask = Task {
+                if case .running = await runHandOver(reregister: false) { exitApp() }
+            }
+        }
+    }
+
+    /// Hands over to the login job. Returns nil, and this copy keeps
+    /// running, if a quit, restart or logout started meanwhile: the job's
+    /// copy then gives up waiting and exits 0.
+    private func runHandOver(reregister: Bool) async -> LoginItem.HandOver? {
+        let login = self.login
+        handingOver = true
+        defer { handingOver = false }
+        let result = await Blocking.run { LoginItem.handOver(login, reregister: reregister) }
+        refreshLoginItem()
+        guard !controlling, !sessionEnding, !Task.isCancelled else { return nil }
+        return result
     }
 
     func approveLoginItem() { login.openSettings() }
@@ -567,19 +597,22 @@ extension HostModel {
     /// only if the retry fails too.
     @discardableResult
     func retryHandOver(after message: String) -> Task<Void, Never> {
-        let login = self.login
-        let delay = handOverRetry
-        return Task {
-            try? await Task.sleep(for: .seconds(delay))
-            // Turned off, or quitting, in the meantime.
-            guard !controlling, login.status == .enabled else { return }
-            let result = await Blocking.run { LoginItem.handOver(login, reregister: true) }
-            refreshLoginItem()
-            switch result {
-            case .running: exitApp()
-            case .needsApproval: break
-            case .failed: actionError = message
-            }
+        let task = Task { await retry(after: message) }
+        loginTask = task
+        return task
+    }
+
+    private func retry(after message: String) async {
+        try? await Task.sleep(for: .seconds(handOverRetry))
+        // Turned off, or quitting, in the meantime: those cancel loginTask.
+        guard !Task.isCancelled else { return }
+        // A restart in progress: say so rather than drop the retry silently.
+        guard !controlling else { actionError = message; return }
+        guard login.status == .enabled, !handingOver else { return }
+        switch await runHandOver(reregister: true) {
+        case .running: exitApp()
+        case .needsApproval, nil: break
+        case .failed: actionError = message
         }
     }
 
@@ -596,8 +629,10 @@ extension HostModel {
     /// daemon the way Quit does, then unregisters.
     @discardableResult
     func setStartAtLogin(_ on: Bool) -> Task<Void, Never>? {
-        guard !controlling else { return nil }
+        guard !controlling, !handingOver else { return nil }
         let login = self.login
+        loginTask?.cancel()
+        loginTask = nil
         if on {
             guard !startedByAgent else {
                 // This copy is the job already; there is nothing to hand over to.
@@ -610,17 +645,17 @@ extension HostModel {
                     refreshLoginItem()
                 }
             }
-            return Task {
+            let task = Task {
                 // Clears a stale record a previous build left under the label;
                 // macOS keeps its code hash and launchd then refuses this one.
-                let result = await Blocking.run { LoginItem.handOver(login, reregister: true) }
-                refreshLoginItem()
-                switch result {
+                switch await runHandOver(reregister: true) {
                 case .running: exitApp()
-                case .needsApproval: break
-                case .failed(let message): await retryHandOver(after: message).value
+                case .needsApproval, nil: break
+                case .failed(let message): await retry(after: message)
                 }
             }
+            loginTask = task
+            return task
         }
         guard startedByAgent else {
             return Task {
@@ -820,45 +855,15 @@ enum HostSensing {
         let reason = NSAppleEventManager.shared().currentAppleEvent?
             .attributeDescriptor(forKeyword: AEKeyword(kAEQuitReason))?.enumCodeValue
         let systemQuit = QuitPrompt.systemQuit(reason: reason)
-        // A user quit waits for a restart in progress; logout never does.
-        if model.controlling && !systemQuit { return .terminateCancel }
+        // A user quit waits for a restart or a Start at Login handover in
+        // progress; logout never does.
+        if (model.controlling || model.handingOver) && !systemQuit { return .terminateCancel }
         replyPending = true
         Task {
             let quit = await model.quit(systemQuit: systemQuit)
             reply(sender, quit: quit)
         }
         return .terminateLater
-    }
-}
-
-/// Queued and running jobs from both lanes, then the last finished ones,
-/// each with a submenu of its actions.
-struct JobsMenu: View {
-    let model: HostModel
-
-    var body: some View {
-        Text("Jobs")
-        if model.jobs.active.isEmpty { Text("No queued or running jobs") }
-        ForEach(model.jobs.active, id: \.id) { job in
-            Menu(JobList.activeTitle(job, now: model.now)) {
-                if !job.reason.isEmpty { Text(job.reason) }
-                Button(model.cancelling.contains(job.id) ? "Cancelling…" : "Cancel") { model.cancel(job) }
-                    .disabled(model.cancelling.contains(job.id))
-                Button("Copy Job ID") { model.copyID(job.id) }
-            }
-        }
-        if !model.jobs.recent.isEmpty {
-            Divider()
-            Text("Recently finished")
-            ForEach(model.jobs.recent, id: \.id) { job in
-                Menu(JobList.recentTitle(job, now: model.now)) {
-                    if !job.reason.isEmpty { Text(job.reason) }
-                    Button("Reveal Artifacts") { model.revealArtifacts(job.artifacts) }
-                        .disabled(job.artifacts.isEmpty)
-                    Button("Copy Job ID") { model.copyID(job.id) }
-                }
-            }
-        }
     }
 }
 
@@ -965,10 +970,10 @@ struct JobsMenu: View {
             }
             Divider()
             Button("Restart Daemon") { model.restart() }
-                .disabled(model.daemon.busy || model.controlling)
+                .disabled(model.daemon.busy || model.controlling || model.handingOver)
             Toggle("Start at Login", isOn: Binding(get: { model.loginItem.isOn },
                                                     set: { model.setStartAtLogin($0) }))
-                .disabled(!model.loginItem.enabled || model.controlling)
+                .disabled(!model.loginItem.enabled || model.controlling || model.handingOver)
             if let note = model.loginItem.note { Text(note) }
             if model.loginItem.approve {
                 Button("Approve Start at Login…") { model.approveLoginItem() }

@@ -15,6 +15,8 @@ Only the copy launchd started gets crash relaunch, so Offscreen hands over to it
 - Ticking the box from a copy you opened registers the agent, waits for launchd to start the job's copy, then exits 0 without stopping the daemon. The job's copy waits for that exit instead of yielding to it, and keeps the daemon.
 - Opening Offscreen by hand while Start at Login is on does the same at launch, after unregistering and registering again. That renews the registration after an upgrade: macOS keeps reporting the old one as enabled but refuses to start the new signature until it is renewed.
 - Unticking from the job's copy asks first, stops the daemon as Quit does, then unregisters. Unregistering boots out the job, and launchd kills the app without asking it, so the daemon is stopped first. Unticking from a copy you opened only unregisters.
+- macOS refuses the first registration of a newly installed build and accepts one a few seconds later, so a handover that fails is tried once more after 15 seconds. Until then, and for good if the retry fails too (the menu shows why), the copy you opened keeps running with the daemon, without crash relaunch.
+- While a handover runs, Restart Daemon, Quit and the checkbox wait for it. Turning Start at Login off, quitting or restarting cancels a pending retry. Approving the item in System Settings hands over too.
 
 ## Jobs menu
 

@@ -14,6 +14,7 @@ final class FakeLogin: LoginService, @unchecked Sendable {
     private var jobAfterRegister: Int32? = 4242
     private var registers = 0
     private var jobFromRegister = 1
+    private var registerDelay = 0.0
 
     init(status: LoginStatus = .notRegistered) { current = status }
 
@@ -27,8 +28,12 @@ final class FakeLogin: LoginService, @unchecked Sendable {
     /// The job runs only from the nth register call on, as macOS does with
     /// a newly installed build.
     func startJobFromRegister(_ n: Int) { lock.withLock { jobFromRegister = n } }
+    /// Each register call blocks this long, as a slow BTM does.
+    func slowRegister(_ seconds: Double) { lock.withLock { registerDelay = seconds } }
 
     func register() throws {
+        let delay = lock.withLock { registerDelay }
+        if delay > 0 { Thread.sleep(forTimeInterval: delay) }
         try lock.withLock {
             log.append("register")
             registers += 1
@@ -162,6 +167,34 @@ final class StartAtLoginTests: XCTestCase {
                   post: { _ in }, control: control, confirm: confirm, login: login, startedByAgent: agent,
                   sourceInstalled: { false }, bundled: true, exitApp: { exits.count += 1 },
                   handOverRetry: 0.05)
+    }
+
+    func testAQuitDuringAHandoverKeepsThisCopyRunning() async {
+        let login = FakeLogin()
+        login.slowRegister(0.3)
+        let exits = Exits()
+        let model = model(login, agent: false, exits: exits)
+        let tick = model.setStartAtLogin(true)
+        while !model.handingOver { await Task.yield() }
+        XCTAssertNil(model.setStartAtLogin(true), "a second tick waits for the handover")
+        XCTAssertNil(model.restart(), "Restart waits for the handover")
+        _ = await model.shutDown(verb: "Quit")
+        await tick?.value
+        XCTAssertEqual(exits.count, 0, "the quit wins; this copy must not exit mid-quit")
+        XCTAssertEqual(login.calls.filter { $0 == "register" }.count, 2, "one handover only")
+    }
+
+    func testTurningStartAtLoginOffCancelsAPendingRetry() async {
+        let login = FakeLogin()
+        login.neverStartJob()
+        let exits = Exits()
+        let model = model(login, agent: false, exits: exits)
+        let retry = model.retryHandOver(after: "failed")
+        _ = await model.setStartAtLogin(false)?.value
+        await retry.value
+        XCTAssertEqual(login.calls, ["unregister"], "the cancelled retry never registers")
+        XCTAssertNil(model.actionError)
+        XCTAssertEqual(exits.count, 0)
     }
 
     func testAHandoverRefusedForANewBuildIsRetriedOnce() async {
