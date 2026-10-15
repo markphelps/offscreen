@@ -110,3 +110,5 @@ A kept clone **holds its VM slot and any exclusive-project lease** until `offscr
 | `75` | Queue deadline expired before execution. |
 | `70` | Runner, daemon, VM, preparation, or cleanup failed (also a lost attached stdin after daemon restart). |
 | `1` | CLI usage, config, or other client-side error. |
+
+When Tart can't be found, the error says `tart isn't installed or isn't on PATH` and names `brew install cirruslabs/cli/tart`. A daemon failure (a VM job exiting `70`, a prune, or daemon startup) also says to run `offscreen daemon install` from a shell where `tart` is on `PATH`: the daemon uses the `PATH` recorded when it was installed. The exit status doesn't change.

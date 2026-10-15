@@ -248,7 +248,7 @@ func (s *Server) handlePrune(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	report, err := s.Prune(r.Context(), PruneOptions{Cutoff: now.Add(-req.OlderThan), Apply: req.Apply})
 	if err != nil {
-		bad(w, 503, fmt.Errorf("prune: %w; nothing was deleted, retry later", err))
+		bad(w, 503, fmt.Errorf("prune: %w; nothing was deleted, retry later", tartHint(err)))
 		return
 	}
 	respond(w, report)

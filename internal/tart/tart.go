@@ -5,8 +5,10 @@ package tart
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"strings"
@@ -14,6 +16,34 @@ import (
 
 // errorLines is how many trailing output lines a failed command's error keeps.
 const errorLines = 20
+
+// ErrNotInstalled reports that the Tart binary couldn't be found. Match it
+// with errors.Is; the error itself also carries the exec error and an install
+// hint.
+var ErrNotInstalled = errors.New("tart isn't installed or isn't on PATH")
+
+// InstallHint is the command that installs Tart.
+const InstallHint = "brew install cirruslabs/cli/tart"
+
+type notInstalledError struct{ err error }
+
+func (e *notInstalledError) Error() string {
+	return fmt.Sprintf("%v (%v); install it with: %s", ErrNotInstalled, e.err, InstallHint)
+}
+
+func (e *notInstalledError) Unwrap() []error { return []error{ErrNotInstalled, e.err} }
+
+// startError marks a failure to start the Tart binary because it doesn't
+// exist. Other errors, including a nonzero exit, are returned unchanged.
+func startError(err error) error {
+	if _, ok := errors.AsType[*exec.ExitError](err); ok {
+		return err
+	}
+	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
+		return &notInstalledError{err: err}
+	}
+	return err
+}
 
 type VM struct {
 	Name    string `json:"Name"`
@@ -33,6 +63,9 @@ func (c Client) command(ctx context.Context, args ...string) ([]byte, error) {
 	}
 	out, err := exec.CommandContext(ctx, binary, args...).CombinedOutput()
 	if err != nil {
+		if err := startError(err); errors.Is(err, ErrNotInstalled) {
+			return nil, fmt.Errorf("tart %s: %w", strings.Join(args, " "), err)
+		}
 		return nil, fmt.Errorf("tart %s: %w: %s", strings.Join(args, " "), err, lastLines(string(out), errorLines))
 	}
 	return out, nil
@@ -78,7 +111,7 @@ func (c Client) Pull(ctx context.Context, name string, out io.Writer) error {
 	// One writer for both streams, so exec serializes the writes.
 	cmd.Stdout, cmd.Stderr = out, out
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("tart pull %s: %w", name, err)
+		return fmt.Errorf("tart pull %s: %w", name, startError(err))
 	}
 	return nil
 }
@@ -136,7 +169,7 @@ func (c Client) StartShared(ctx context.Context, name string, shares []string, s
 	}
 	cmd := exec.CommandContext(ctx, binary, args...)
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start tart VM %q: %w", name, err)
+		return nil, fmt.Errorf("start tart VM %q: %w", name, startError(err))
 	}
 	return cmd, nil
 }
