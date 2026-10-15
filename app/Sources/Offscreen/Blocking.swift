@@ -4,10 +4,15 @@ import os
 /// Runs blocking work, such as socket round trips and launchctl, on its own
 /// dispatch queue so it never holds a thread in Swift's cooperative pool. A
 /// cancel can block for 140 seconds and a daemon stop for 20. The queue is
-/// concurrent and overcommits, so parallel cancels each get a thread.
+/// concurrent, and GCD adds threads while its work blocks, so parallel
+/// cancels don't wait behind each other.
 enum Blocking {
     private static let queue = DispatchQueue(label: "io.latentsignal.offscreen.blocking",
                                              qos: .userInitiated, attributes: .concurrent)
+    // Timeouts fire from their own serial queue, which gets a thread even
+    // when blocked work fills the concurrent one.
+    private static let timeouts = DispatchQueue(label: "io.latentsignal.offscreen.blocking.timeouts",
+                                                qos: .userInitiated)
 
     static func run<T: Sendable, E: Error>(_ work: @escaping @Sendable () throws(E) -> T) async throws(E) -> T {
         let result = await withCheckedContinuation { (continuation: CheckedContinuation<Result<T, E>, Never>) in
@@ -29,7 +34,7 @@ enum Blocking {
                 if first { continuation.resume(returning: value) }
             }
             queue.async { finish(work()) }
-            queue.asyncAfter(deadline: .now() + seconds) { finish(nil) }
+            timeouts.asyncAfter(deadline: .now() + seconds) { finish(nil) }
         }
     }
 }

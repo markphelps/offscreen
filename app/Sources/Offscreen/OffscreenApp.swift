@@ -132,6 +132,8 @@ import SwiftUI
             do {
                 try await Blocking.run { try control.start() }
             } catch {
+                // A restart's start can finish after logout began.
+                guard !sessionEnding else { return }
                 startDeadline = .distantPast
                 daemon = .notResponding("\(error)")
             }
@@ -176,6 +178,9 @@ import SwiftUI
                 refreshing = false
                 refreshAfterInput = false
                 guard !controlling else { return }
+                // No daemon, no host job: stop sensing and release the App
+                // Nap activity until it answers again.
+                hostActive = false
                 assign(\.status, nil)
                 setJobs([])
                 countdownPanel?.hide()
@@ -777,6 +782,32 @@ final class NotificationHandler: NSObject, UNUserNotificationCenterDelegate, @un
 @MainActor enum AppState { static let model = HostModel() }
 
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
+    // A terminateLater reply is still owed.
+    private var replyPending = false
+    private var powerOffObserver: NSObjectProtocol?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // A user Quit can still be cancelling jobs, for minutes, when logout
+        // starts. AppKit doesn't ask again while a reply is pending, so end
+        // the session now rather than hold up logout.
+        powerOffObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.willPowerOffNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.replyPending else { return }
+                Task {
+                    _ = await AppState.model.endSession()
+                    self.reply(NSApp, quit: true)
+                }
+            }
+        }
+    }
+
+    private func reply(_ sender: NSApplication, quit: Bool) {
+        guard replyPending else { return }
+        replyPending = false
+        sender.reply(toApplicationShouldTerminate: quit)
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let model = AppState.model
         let reason = NSAppleEventManager.shared().currentAppleEvent?
@@ -784,9 +815,10 @@ final class NotificationHandler: NSObject, UNUserNotificationCenterDelegate, @un
         let systemQuit = QuitPrompt.systemQuit(reason: reason)
         // A user quit waits for a restart in progress; logout never does.
         if model.controlling && !systemQuit { return .terminateCancel }
+        replyPending = true
         Task {
             let quit = await model.quit(systemQuit: systemQuit)
-            sender.reply(toApplicationShouldTerminate: quit)
+            reply(sender, quit: quit)
         }
         return .terminateLater
     }
@@ -841,8 +873,10 @@ struct JobsMenu: View {
     /// LaunchAgent restarts the app only after a failed exit.
     private static func exitIfAlreadyRunning() {
         guard let id = Bundle.main.bundleIdentifier else { return }
-        let current = NSRunningApplication.current
-        let me = SingleInstance.Instance(pid: current.processIdentifier, launched: current.launchDate)
+        // Launched outside LaunchServices, as the source-install LaunchAgent
+        // does, this copy isn't registered yet: NSRunningApplication.current
+        // has pid -1 and no launch date. It is starting now.
+        let me = SingleInstance.Instance(pid: getpid(), launched: NSRunningApplication.current.launchDate ?? Date())
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: id)
             .filter { !$0.isTerminated }
             .map { SingleInstance.Instance(pid: $0.processIdentifier, launched: $0.launchDate) }
