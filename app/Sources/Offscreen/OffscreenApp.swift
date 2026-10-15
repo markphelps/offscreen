@@ -13,6 +13,11 @@ import UserNotifications
     private let bridge = Bridge(socketPath: Bridge.defaultSocket())
     private var timer: Timer?
     private var eventTap: CFMachPort?
+    private var tapSource: CFRunLoopSource?
+    // Input Monitoring, the event tap and snapshots run only while the daemon
+    // has host work, so VM-only users are never asked for the permission.
+    private var hostActive = false
+    private var sensing = false
     private var previousNotice = ""
     private var refreshing = false
     private var refreshAfterInput = false
@@ -23,9 +28,6 @@ import UserNotifications
 
     func start() {
         guard timer == nil else { return }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
-        _ = CGRequestListenEventAccess()
-        installTap()
         let heartbeat = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
@@ -39,19 +41,22 @@ import UserNotifications
     private func refresh() {
         guard !refreshing else { return }
         refreshing = true
-        if let tap = eventTap, !CFMachPortIsValid(tap) { eventTap = nil }
-        // A denied grant can be enabled in System Settings without restarting.
-        if eventTap == nil && CGPreflightListenEventAccess() { installTap() }
+        let sense = HostSensing.needed(hostActive: hostActive, probe: probe)
+        setSensing(sense)
         let tapReady = eventTap.map { CFMachPortIsValid($0) && CGEvent.tapIsEnabled(tap: $0) } ?? false
         let bridge = self.bridge
         Task.detached {
-            let snapshot = Sensors.snapshot(eventTapReady: tapReady)
             do {
-                let state = try bridge.request("/host/snapshot", snapshot: snapshot)
+                let state = sense
+                    ? try bridge.request("/host/snapshot", snapshot: Sensors.snapshot(eventTapReady: tapReady))
+                    : try bridge.request("/host/status")
                 await MainActor.run {
                     self.refreshing = false
+                    self.hostActive = HostSensing.hostActive(state)
                     self.update(state)
-                    if self.refreshAfterInput {
+                    // Send the first snapshot now rather than on the next
+                    // heartbeat so admission isn't delayed by the switch.
+                    if self.refreshAfterInput || HostSensing.needed(hostActive: self.hostActive, probe: self.probe) != sense {
                         self.refreshAfterInput = false
                         self.refresh()
                     }
@@ -80,7 +85,11 @@ import UserNotifications
             notification.body = "\(name) continues for \(new.graceSeconds ?? 0)s. Take back now to stop and requeue it."
             notification.categoryIdentifier = "HOST_RETURN"
             let request = UNNotificationRequest(identifier: "return-\(id)", content: notification, trigger: nil)
-            UNUserNotificationCenter.current().add(request)
+            // Ask for Notifications only when there is one to show. After the
+            // first answer macOS returns it without prompting again.
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
+                if granted { UNUserNotificationCenter.current().add(request) }
+            }
         }
         if new.returnJob == nil { previousNotice = "" }
         if pendingReturn != new.running?.id || new.returnJob != nil { pendingReturn = "" }
@@ -129,6 +138,28 @@ import UserNotifications
         }
     }
 
+    private func setSensing(_ on: Bool) {
+        guard on else {
+            if sensing { removeTap() }
+            sensing = false
+            return
+        }
+        if !sensing {
+            sensing = true
+            _ = CGRequestListenEventAccess()
+        }
+        if let tap = eventTap, !CFMachPortIsValid(tap) { removeTap() }
+        // A denied grant can be enabled in System Settings without restarting.
+        if eventTap == nil && CGPreflightListenEventAccess() { installTap() }
+    }
+
+    private func removeTap() {
+        if let source = tapSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
+        if let tap = eventTap { CFMachPortInvalidate(tap) }
+        tapSource = nil
+        eventTap = nil
+    }
+
     private func installTap() {
         let kinds: [CGEventType] = [.keyDown, .mouseMoved, .leftMouseDown, .rightMouseDown, .scrollWheel]
         let mask = kinds.reduce(CGEventMask(0)) { $0 | (CGEventMask(1) << $1.rawValue) }
@@ -146,6 +177,7 @@ import UserNotifications
         }, userInfo: Unmanaged.passUnretained(self).toOpaque()) else { return }
         eventTap = tap
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        tapSource = source
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
     }
@@ -171,6 +203,16 @@ import UserNotifications
         pendingReturn = id
         action("return", job: id)
     }
+}
+
+enum HostSensing {
+    /// The daemon has host work: a queued or running job, or a grace period.
+    static func hostActive(_ status: HostStatus) -> Bool {
+        status.queued > 0 || status.running != nil || status.returnJob != nil
+    }
+
+    /// Probe mode always listens so it can compare physical and injected input.
+    static func needed(hostActive: Bool, probe: Bool) -> Bool { probe || hostActive }
 }
 
 enum CountdownVisibility {

@@ -1,6 +1,6 @@
 # Host helper
 
-The host lane uses a native macOS menu bar app. A nonactivating panel appears automatically for the ten-second host-job countdown, with a visible **Not now** button; the menu offers the same action. It does not activate the app or request keyboard focus. It sends a fresh desktop signal to the daemon each second over the owner-only Unix socket. The VM lane works without this app. The helper uses Input Monitoring to listen for input and notifications to offer **Take back now**. It does not request Accessibility.
+The host lane uses a native macOS menu bar app. A nonactivating panel appears automatically for the ten-second host-job countdown, with a visible **Not now** button; the menu offers the same action. It does not activate the app or request keyboard focus. While the daemon has a host job queued or running, it sends a fresh desktop signal to the daemon each second over the owner-only Unix socket. The VM lane works without this app. The helper uses Input Monitoring to listen for input and notifications to offer **Take back now**. It asks for Input Monitoring only once a host job exists, and for Notifications only when it first has one to show. It does not request Accessibility.
 
 ## Build from source
 

@@ -104,6 +104,23 @@ final class OffscreenTests: XCTestCase {
         XCTAssertNil(CountdownVisibility.jobID(status: paused, visibleJobID: "one"))
     }
 
+    func testHostSensingRunsOnlyWhileTheDaemonHasHostWork() throws {
+        func status(_ json: String) throws -> HostStatus {
+            try JSONDecoder().decode(HostStatus.self, from: Data(json.utf8))
+        }
+        let idle = try status(#"{"queued":0,"waiting_reason":"","paused":false}"#)
+        XCTAssertFalse(HostSensing.hostActive(idle))
+        XCTAssertFalse(HostSensing.hostActive(try status(#"{"queued":0,"waiting_reason":"","paused":true}"#)))
+        XCTAssertTrue(HostSensing.hostActive(try status(#"{"queued":1,"waiting_reason":"host lane paused","paused":true}"#)))
+        XCTAssertTrue(HostSensing.hostActive(try status(
+            #"{"queued":0,"waiting_reason":"","paused":false,"running":{"id":"one","project":"p","task":"","state":"running"}}"#)))
+        XCTAssertTrue(HostSensing.hostActive(try status(
+            #"{"queued":0,"waiting_reason":"","paused":false,"return_job":"one","grace_seconds":30}"#)))
+        XCTAssertFalse(HostSensing.needed(hostActive: false, probe: false))
+        XCTAssertTrue(HostSensing.needed(hostActive: true, probe: false))
+        XCTAssertTrue(HostSensing.needed(hostActive: false, probe: true))
+    }
+
     func testSnapshotEncodingUsesDaemonKeys() throws {
         let snapshot = Snapshot(idleSeconds: 300, unlocked: true, displayAwake: true,
                                 cameraIdle: false, microphoneIdle: true, inputMonitoring: true, eventTapReady: true)
