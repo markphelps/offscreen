@@ -220,7 +220,7 @@ func open(cfg config.Config, executor func(context.Context, run.Options) run.Res
 		stop()
 		_ = db.Close()
 		_ = lock.Close()
-		return nil, err
+		return nil, tartHint(err)
 	}
 	// Recovery and terminal scrubbing succeeded; expire old history before
 	// admitting work or serving requests, then keep it bounded periodically.
@@ -869,7 +869,7 @@ func (s *Server) execute(ctx context.Context, w *worker, req Request) {
 		return
 	}
 	if result.Err != nil {
-		_ = s.transition(w, "failed", result.Err.Error(), result.Code)
+		_ = s.transition(w, "failed", tartHint(result.Err).Error(), result.Code)
 	} else {
 		_ = s.transition(w, "done", "", result.Code)
 	}
@@ -945,6 +945,16 @@ func respond(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 func bad(w http.ResponseWriter, code int, err error) { http.Error(w, err.Error(), code) }
+
+// tartHint adds the daemon's PATH remedy to a missing-Tart error. The daemon
+// finds tart through the PATH that `offscreen daemon install` recorded.
+func tartHint(err error) error {
+	if errors.Is(err, tart.ErrNotInstalled) {
+		return fmt.Errorf("%w; the daemon uses the PATH recorded at install, so after installing Tart run `offscreen daemon install` from a shell where tart is on PATH", err)
+	}
+	return err
+}
+
 func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	var req Request
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1042,7 +1052,7 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 			bad(w, 504, errors.New("VM cleanup timed out; retry cancel to release its slot"))
 			return
 		}
-		bad(w, 500, fmt.Errorf("retained VM cleanup: %w; retry cancel to release its slot", err))
+		bad(w, 500, fmt.Errorf("retained VM cleanup: %w; retry cancel to release its slot", tartHint(err)))
 		return
 	}
 	s.mu.Lock()

@@ -64,6 +64,37 @@ func TestPullAcceptsNilOutput(t *testing.T) {
 	require.NoError(t, client.Pull(context.Background(), "base", nil))
 }
 
+func TestMissingBinaryReportsNotInstalled(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		binary string
+	}{
+		{"path", filepath.Join(t.TempDir(), "tart")},
+		{"bare name", "offscreen-test-missing-tart"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := Client{Binary: tc.binary}
+			_, listErr := client.List(context.Background())
+			pullErr := client.Pull(context.Background(), "base", nil)
+			_, startErr := client.StartShared(context.Background(), "job-1", nil, false)
+			for _, err := range []error{listErr, pullErr, startErr} {
+				require.ErrorIs(t, err, ErrNotInstalled)
+				require.ErrorContains(t, err, "tart isn't installed or isn't on PATH")
+				require.ErrorContains(t, err, "install it with: brew install cirruslabs/cli/tart")
+			}
+			require.True(t, strings.HasPrefix(listErr.Error(), "tart list --format json: "))
+		})
+	}
+}
+
+func TestFailingTartIsNotReportedAsNotInstalled(t *testing.T) {
+	client := scriptTart(t, "echo 'no such file or directory' >&2; exit 1\n")
+	err := client.Clone(context.Background(), "a", "b")
+	require.Error(t, err)
+	require.NotErrorIs(t, err, ErrNotInstalled)
+	require.EqualError(t, err, "tart clone a b: exit status 1: no such file or directory")
+}
+
 func TestCommandErrorKeepsOnlyTheLastLines(t *testing.T) {
 	client := scriptTart(t, "i=1; while [ $i -le 100 ]; do echo \"line $i\"; i=$((i+1)); done; exit 1\n")
 	err := client.Clone(context.Background(), "a", "b")
