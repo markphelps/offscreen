@@ -58,7 +58,8 @@ No Accessibility permission is needed. When macOS asks, allow **Offscreen Daemon
 Older installs called the menu bar app **Offscreen Helper** (`~/Applications/OffscreenHelper.app`, identifier `dev.offscreen.helper`) and the daemon `dev.offscreen.offscreend`. `mise run install` removes the old app and both old LaunchAgents when they are offscreen's own. Because the identifiers changed, macOS treats Offscreen as a new app:
 
 - Grant **Local Network** to Offscreen Daemon and **Input Monitoring** and **Notifications** to Offscreen again when asked.
-- Stale **Offscreen Helper** rows (Input Monitoring, Notifications) and an old **Offscreen Daemon** row (Local Network) can stay in System Settings > Privacy & Security and System Settings > Notifications. Offscreen never edits the permission database, so remove them yourself with the **-** button or turn them off. If two **Offscreen Daemon** rows appear under Local Network, remove both and allow it again at the next prompt.
+- Stale **Offscreen Helper** rows (Input Monitoring, Notifications) can stay in System Settings > Privacy & Security and System Settings > Notifications. Offscreen never edits the permission database, so remove them yourself with the **-** button or turn them off.
+- An old **Offscreen Daemon** row can also stay under Local Network. That pane has no remove button, and the old row is harmless. If VM jobs fail at guest SSH, turn every **Offscreen Daemon** switch off and on again.
 - The host-lane settings `VerifiedInputFilter` and `ManualReturn` were stored under the old identifier. If you had set either, set it again under the new one after rerunning the [input probe](../app/README.md#input-discrimination-probe), for example `defaults write io.latentsignal.offscreen ManualReturn -bool YES`, then remove the old ones with `defaults delete dev.offscreen.helper`.
 
 ## Build the golden image
