@@ -45,6 +45,22 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <key>OffscreenBuild</key><string>$build</string>
 </dict></plist>
 PLIST
+# Start at Login (the menu's checkbox) registers this agent with
+# SMAppService.agent, which reads it only from inside the signed bundle, so
+# write it before codesign. Same rules as scripts/install.sh's agent: launchd
+# relaunches the app after a crash, not after Quit Offscreen (exit 0).
+mkdir -p "$app/Contents/Library/LaunchAgents"
+cat > "$app/Contents/Library/LaunchAgents/$label.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>$label</string>
+<key>BundleProgram</key><string>Contents/MacOS/Offscreen</string>
+<key>RunAtLoad</key><true/>
+<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+</dict></plist>
+PLIST
+plutil -lint -s "$app/Contents/Library/LaunchAgents/$label.plist"
 codesign --force --sign - --identifier "$label" \
   -r "=designated => identifier \"$label\"" "$app"
 codesign --verify --strict "$app"

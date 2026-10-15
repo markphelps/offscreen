@@ -93,7 +93,9 @@ final class HostModelTests: XCTestCase {
                        confirm: @escaping @MainActor (Confirmation) -> Bool = { _ in true },
                        sessionStopLimit: Double = 5) -> HostModel {
         HostModel(bridge: bridge, manualReturn: false, verifiedFilter: true, post: { _ in },
-                  control: control, confirm: confirm, sessionStopLimit: sessionStopLimit)
+                  control: control, confirm: confirm, sessionStopLimit: sessionStopLimit,
+                  login: FakeLogin(), startedByAgent: false, sourceInstalled: { false }, bundled: true,
+                  exitApp: { XCTFail("the app must not exit") })
     }
 
     func testRestartReportsAFailedStopAndDoesNotStart() async {

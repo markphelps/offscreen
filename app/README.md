@@ -1,10 +1,20 @@
 # Offscreen menu bar app
 
-**Offscreen** is the menu bar app that comes with the CLI and daemon; the Homebrew cask and `mise run install` both install all three (see the [install guide](../docs/install.md)). A source install starts it at login from `~/Library/LaunchAgents/io.latentsignal.offscreen.plist`; with Homebrew, add it as a login item yourself. It owns the daemon's lifecycle.
+**Offscreen** is the menu bar app that comes with the CLI and daemon; the Homebrew cask and `mise run install` both install all three (see the [install guide](../docs/install.md)). A source install starts it at login from `~/Library/LaunchAgents/io.latentsignal.offscreen.plist`; with Homebrew, turn on **Start at Login** in its menu (see below). It owns the daemon's lifecycle.
 
 ## Daemon controls
 
 Launching Offscreen starts the daemon (`launchctl kickstart` of `io.latentsignal.offscreend`). The top of the menu shows the daemon's state: running with its version, starting, not responding, or a version that doesn't match the app (restart it). **Restart Daemon** and **Quit Offscreen** each list active jobs first; if there are any, they ask "Restart and cancel N jobs?" or "Quit and cancel N jobs?" and, on confirm, cancel them through the daemon's normal cancel path before stopping it. If the daemon doesn't stop within 20 seconds, Restart Daemon shows the error instead of restarting, and Quit asks "Quit Anyway?" before leaving it running. Logout, restart and shutdown don't ask or cancel: Offscreen sends the daemon `SIGTERM`, waits at most 5 seconds, and never holds up the logout, even while a restart or its confirmation is in progress. The daemon fails jobs that were in flight and deletes their clones the next time it starts. Only one copy of Offscreen runs at a time; a second copy exits at launch. If the daemon crashes, the menu says it isn't responding; choose **Restart Daemon**. When Offscreen isn't running, CLI commands that need the daemon print `Offscreen isn't running. Open it with: open -a Offscreen`.
+
+## Start at Login
+
+**Start at Login** registers the agent sealed into the bundle, `Contents/Library/LaunchAgents/io.latentsignal.offscreen.plist`, with `SMAppService.agent`. It has the same rules as the source install's agent: `RunAtLoad`, and `KeepAlive` only after a failed exit, so launchd relaunches Offscreen after a crash but not after **Quit Offscreen** or the single-instance exit (both exit 0). It is off until you tick it. When macOS reports that the item needs approval, the menu shows **Approve Start at Login…**, which opens Login Items in System Settings. With a source install (`~/Library/LaunchAgents/io.latentsignal.offscreen.plist` exists) the checkbox is greyed out, since that agent already starts Offscreen.
+
+Only the copy launchd started gets crash relaunch, so Offscreen hands over to it:
+
+- Ticking the box from a copy you opened registers the agent, waits for launchd to start the job's copy, then exits 0 without stopping the daemon. The job's copy waits for that exit instead of yielding to it, and keeps the daemon.
+- Opening Offscreen by hand while Start at Login is on does the same at launch, after unregistering and registering again. That renews the registration after an upgrade: macOS keeps reporting the old one as enabled but refuses to start the new signature until it is renewed.
+- Unticking from the job's copy asks first, stops the daemon as Quit does, then unregisters. Unregistering boots out the job, and launchd kills the app without asking it, so the daemon is stopped first. Unticking from a copy you opened only unregisters.
 
 ## Jobs menu
 

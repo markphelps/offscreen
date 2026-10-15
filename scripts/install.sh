@@ -49,8 +49,11 @@ owned_app() {
 }
 
 # stop_app stops the menu bar app, old and new. Booting out the LaunchAgent
-# stops the instance launchd started; an instance opened another way (open -a,
-# Finder) is not launchd's, so signal it too. SIGTERM skips the app's quit
+# stops the instance launchd started. Booting out the label also stops a copy
+# started by a Homebrew app's Start at Login, which shares it and whose argv
+# is the relative Contents/MacOS/Offscreen, so the pkill below misses it. An
+# instance opened another way (open -a, Finder) is not launchd's, so signal
+# it too. SIGTERM skips the app's quit
 # prompt and leaves the daemon running; the daemon install that follows
 # restarts it, and uninstall stops it.
 stop_app() {
@@ -61,6 +64,7 @@ stop_app() {
       rm "$agent"
     fi
   done
+  launchctl bootout "$domain/$label" 2>/dev/null || true
   for exe in "$app/Contents/MacOS/Offscreen" "$legacy_app/Contents/MacOS/OffscreenHelper"; do
     pkill -TERM -x -f "$exe" 2>/dev/null || true
     for _ in 1 2 3 4 5 6 7 8 9 10; do

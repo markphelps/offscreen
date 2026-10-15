@@ -89,6 +89,16 @@ import SwiftUI
     private let probe = CommandLine.arguments.contains("--probe-input")
     private let manualReturn: Bool
     private let verifiedFilter: Bool
+    // Start at Login. The menu reads loginItem, which is refreshed only while
+    // no menu is open, every few heartbeats so an approval in System
+    // Settings shows up.
+    private(set) var loginItem = LoginItem.Menu(isOn: false, enabled: false)
+    private let login: any LoginService
+    private let startedByAgent: Bool
+    private let sourceInstalled: () -> Bool
+    private let bundled: Bool
+    private let exitApp: @MainActor () -> Void
+    private var loginTicks = 0
 
     init(bridge: any HostBridge = Bridge(socketPath: Bridge.defaultSocket()),
          manualReturn: Bool = UserDefaults.standard.bool(forKey: "ManualReturn"),
@@ -96,7 +106,17 @@ import SwiftUI
          post: @escaping @MainActor (UNNotificationRequest) -> Void = Notifier.post,
          control: any DaemonLauncher = DaemonControl(),
          confirm: (@MainActor (Confirmation) async -> Bool)? = nil,
-         sessionStopLimit: Double = 5) {
+         sessionStopLimit: Double = 5,
+         login: any LoginService = AgentLoginService(),
+         startedByAgent: Bool = LoginItem.startedByAgent(),
+         sourceInstalled: @escaping () -> Bool = { LoginItem.sourceInstalled() },
+         bundled: Bool = LoginItem.bundled(),
+         exitApp: @escaping @MainActor () -> Void = { exit(0) }) {
+        self.login = login
+        self.startedByAgent = startedByAgent
+        self.sourceInstalled = sourceInstalled
+        self.bundled = bundled
+        self.exitApp = exitApp
         self.bridge = bridge
         self.control = control
         self.confirm = confirm ?? { [alert] in await alert.ask($0) }
@@ -125,8 +145,12 @@ import SwiftUI
             MainActor.assumeIsolated { self?.closePrompt() }
         })
         startDaemon(.starting)
+        refreshLoginItem()
         let heartbeat = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+            Task { @MainActor in
+                self?.refresh()
+                self?.pollLoginItem()
+            }
         }
         RunLoop.main.add(heartbeat, forMode: .common)
         timer = heartbeat
@@ -266,6 +290,7 @@ import SwiftUI
             heldDaemon = nil
             assign(\.daemon, state)
         }
+        refreshLoginItem()
     }
 
     private func showJobs(_ list: [DaemonJob]) {
@@ -517,6 +542,98 @@ extension HostModel {
         return .stopped
     }
 
+    private func pollLoginItem() {
+        loginTicks += 1
+        if loginTicks % 5 == 0 { refreshLoginItem() }
+    }
+
+    /// Reads Start at Login's state, unless a menu is open: changing it
+    /// would rebuild the menu under the pointer.
+    func refreshLoginItem() {
+        guard openMenus == 0 else { return }
+        assign(\.loginItem, LoginItem.menu(status: login.status, sourceInstall: sourceInstalled(), bundled: bundled))
+    }
+
+    func approveLoginItem() { login.openSettings() }
+
+    /// The Start at Login checkbox.
+    ///
+    /// Turning it on registers the login job, and launchd starts a copy of
+    /// the app at once (RunAtLoad). This copy then exits 0 without stopping
+    /// the daemon, and the job's copy, which waited for that exit, keeps it
+    /// and gets crash relaunch now rather than at the next login.
+    ///
+    /// Turning it off from the job's copy quits: unregistering boots out the
+    /// job, and launchd kills this copy without asking the app, which would
+    /// leave the daemon running with no app. So it asks first, stops the
+    /// daemon the way Quit does, then unregisters.
+    @discardableResult
+    func setStartAtLogin(_ on: Bool) -> Task<Void, Never>? {
+        guard !controlling else { return nil }
+        let login = self.login
+        if on {
+            guard !startedByAgent else {
+                // This copy is the job already; there is nothing to hand over to.
+                return Task {
+                    do {
+                        try await Blocking.run { try login.register() }
+                    } catch {
+                        actionError = "Start at Login failed: \(error.localizedDescription)"
+                    }
+                    refreshLoginItem()
+                }
+            }
+            return Task {
+                let result = await Blocking.run { LoginItem.handOver(login, reregister: false) }
+                refreshLoginItem()
+                switch result {
+                case .running: exitApp()
+                case .needsApproval: break
+                case .failed(let message): actionError = message
+                }
+            }
+        }
+        guard startedByAgent else {
+            return Task {
+                do {
+                    try await Blocking.run { try login.unregister() }
+                } catch {
+                    actionError = "Turning off Start at Login failed: \(error.localizedDescription)"
+                }
+                refreshLoginItem()
+            }
+        }
+        let detail = "This copy of Offscreen was started at login, so turning it off quits it and stops the daemon. "
+            + "Open Offscreen again to keep using it."
+        return Task {
+            guard await ask(Confirmation(message: "Turn off Start at Login and quit Offscreen?", detail: detail,
+                                         confirm: "Turn Off and Quit", decline: "Cancel")) else { return }
+            switch await shutDown(verb: "Quit") {
+            case .declined:
+                return
+            case .failed(let error):
+                actionError = "Start at Login is still on. The daemon didn't stop: \(error)"
+                finishControl()
+                return
+            case .stopped:
+                break
+            }
+            do {
+                try await Blocking.run { try login.unregister() }
+            } catch {
+                actionError = "Turning off Start at Login failed: \(error.localizedDescription)"
+                guard !sessionEnding else { return }
+                startDaemon(.starting)
+                controlling = false
+                refreshLoginItem()
+                return
+            }
+            // launchd kills this copy as it boots out the job; exit in case
+            // it hasn't yet.
+            exitApp()
+        }
+    }
+
     /// Lets the heartbeat run again, unless the session is ending.
     private func finishControl() {
         if !sessionEnding { controlling = false }
@@ -532,51 +649,6 @@ extension HostModel {
     /// Closes an open Restart or Quit alert as declined.
     private func closePrompt() {
         alert.dismiss()
-    }
-}
-
-/// The Restart and Quit confirmations. The alert is shown as an ordinary
-/// window, not with runModal: during a modal session AppKit cancels the quit
-/// event that logout sends without asking the delegate, which interrupts
-/// logout.
-@MainActor final class ConfirmationAlert: NSObject {
-    private var shown: NSAlert?
-    private var answer: CheckedContinuation<Bool, Never>?
-
-    func ask(_ question: Confirmation) async -> Bool {
-        dismiss()
-        let alert = NSAlert()
-        alert.messageText = question.message
-        alert.informativeText = question.detail
-        let confirm = alert.addButton(withTitle: question.confirm)
-        let decline = alert.addButton(withTitle: question.decline)
-        confirm.target = self
-        confirm.action = #selector(confirmed)
-        decline.target = self
-        decline.action = #selector(declined)
-        decline.keyEquivalent = "\u{1b}"
-        alert.layout()
-        alert.window.level = .modalPanel
-        alert.window.center()
-        shown = alert
-        // A menu bar app is never frontmost on its own; the alert must be.
-        NSApp.activate()
-        alert.window.makeKeyAndOrderFront(nil)
-        return await withCheckedContinuation { answer = $0 }
-    }
-
-    /// Closes the alert, if one is up, as declined.
-    func dismiss() { finish(false) }
-
-    @objc private func confirmed() { finish(true) }
-    @objc private func declined() { finish(false) }
-
-    private func finish(_ result: Bool) {
-        shown?.window.orderOut(nil)
-        shown = nil
-        let pending = answer
-        answer = nil
-        pending?.resume(returning: result)
     }
 }
 
@@ -675,33 +747,6 @@ extension HostModel {
     }
 }
 
-enum Notifier {
-    private static let log = Logger(subsystem: "io.latentsignal.offscreen", category: "notifications")
-
-    /// Asks for Notifications only when there is one to show. After the first
-    /// answer macOS returns it without prompting again.
-    /// UNUserNotificationCenter crashes outside an app bundle, as under
-    /// `swift run`.
-    static var available: Bool { Bundle.main.bundleIdentifier != nil }
-
-    static func post(_ request: UNNotificationRequest) {
-        guard available else {
-            log.info("notification \(request.identifier, privacy: .public) not shown: not running from an app bundle")
-            return
-        }
-        let center = UNUserNotificationCenter.current()
-        center.requestAuthorization(options: [.alert, .sound]) { granted, error in
-            guard granted else {
-                log.warning("notification \(request.identifier, privacy: .public) not shown: \(error?.localizedDescription ?? "not allowed", privacy: .public)")
-                return
-            }
-            center.add(request) { error in
-                if let error { log.warning("notification \(request.identifier, privacy: .public) failed: \(error.localizedDescription, privacy: .public)") }
-            }
-        }
-    }
-}
-
 enum HostSensing {
     /// The daemon has host work: a queued or running job, or a grace period.
     static func hostActive(_ status: HostStatus) -> Bool {
@@ -710,133 +755,6 @@ enum HostSensing {
 
     /// Probe mode always listens so it can compare physical and injected input.
     static func needed(hostActive: Bool, probe: Bool) -> Bool { probe || hostActive }
-}
-
-enum CountdownVisibility {
-    static func jobID(status: HostStatus, visibleJobID: String?) -> String? {
-        guard status.running == nil, !status.paused, status.queued > 0 else { return nil }
-        // The server keeps this job-bound action after HID idle resets on
-        // mouse-down. An unrelated queued job cannot inherit the old button.
-        let id = status.notNowJob ?? status.countdownJob
-        return id == visibleJobID || status.countdownJob == id ? id : nil
-    }
-}
-
-enum CountdownPlacement {
-    static func frame(panelSize: NSSize, visibleFrame: NSRect) -> NSRect {
-        let width = min(panelSize.width, visibleFrame.width)
-        let height = min(panelSize.height, visibleFrame.height)
-        return NSRect(x: visibleFrame.midX - width / 2,
-                      y: max(visibleFrame.minY, visibleFrame.maxY - height - 16),
-                      width: width, height: height)
-    }
-}
-
-@MainActor private final class CountdownPanel {
-    let jobID: String
-    private let panel: NonactivatingCountdownPanel
-    private let label: NSTextField
-    private let detail: NSTextField
-    private let action: CountdownAction
-
-    init(jobID: String, onNotNow: @escaping (String) -> Void) {
-        self.jobID = jobID
-        action = CountdownAction(jobID: jobID, onNotNow: onNotNow)
-        panel = NonactivatingCountdownPanel(contentRect: NSRect(x: 0, y: 0, width: 300, height: 122),
-                                            styleMask: [.titled, .nonactivatingPanel],
-                                            backing: .buffered, defer: false)
-        label = NSTextField(labelWithString: "Host job starting")
-        detail = NSTextField(labelWithString: "")
-        panel.title = "Offscreen"
-        panel.level = .floating
-        panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        label.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
-        detail.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        detail.textColor = .secondaryLabelColor
-        detail.lineBreakMode = .byWordWrapping
-        detail.maximumNumberOfLines = 2
-        detail.preferredMaxLayoutWidth = 268
-        let button = CountdownButton(title: "Not now (30 minutes)", target: action,
-                                     action: #selector(CountdownAction.notNow))
-        button.bezelStyle = .rounded
-        button.setAccessibilityLabel("Not now: pause host jobs for 30 minutes")
-        let stack = NSStackView(views: [label, detail, button])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 10
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        panel.contentView?.addSubview(stack)
-        if let content = panel.contentView {
-            NSLayoutConstraint.activate([
-                stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
-                stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
-                stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 12),
-                stack.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -12)
-            ])
-        }
-    }
-
-    func show(seconds: Int?, error: String?) {
-        label.stringValue = seconds.map { "Host job starts in \($0) seconds" } ?? "Host job waiting for idle desktop"
-        detail.stringValue = error ?? "Use Not now to pause host jobs before they take the screen."
-        if !panel.isVisible {
-            let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }
-                ?? NSScreen.main ?? NSScreen.screens.first
-            if let screen {
-                panel.layoutIfNeeded()
-                panel.setFrame(CountdownPlacement.frame(panelSize: panel.frame.size,
-                                                         visibleFrame: screen.visibleFrame), display: true)
-            }
-            panel.orderFrontRegardless() // no activation or key-window request
-        }
-    }
-
-    func hide() { panel.orderOut(nil) }
-}
-
-private final class NonactivatingCountdownPanel: NSPanel {
-    override var canBecomeKey: Bool { false }
-    override var canBecomeMain: Bool { false }
-}
-
-private final class CountdownButton: NSButton {
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-}
-
-@MainActor private final class CountdownAction: NSObject {
-    let jobID: String
-    let onNotNow: (String) -> Void
-
-    init(jobID: String, onNotNow: @escaping (String) -> Void) {
-        self.jobID = jobID
-        self.onNotNow = onNotNow
-    }
-
-    @objc func notNow() { onNotNow(jobID) }
-}
-
-final class NotificationHandler: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
-    static let shared = NotificationHandler()
-    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
-                                             willPresent notification: UNNotification,
-                                             withCompletionHandler completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void) {
-        completionHandler([.banner, .list, .sound])
-    }
-
-    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
-                                             didReceive response: UNNotificationResponse,
-                                             withCompletionHandler completionHandler: @escaping () -> Void) {
-        let identifier = response.notification.request.identifier
-        if identifier.hasPrefix("return-"), response.actionIdentifier == "TAKE_BACK" {
-            let id = String(identifier.dropFirst("return-".count))
-            Task { @MainActor in AppState.model.action("take-back", job: id) }
-        } else if identifier.hasPrefix("failed-"), response.actionIdentifier == UNNotificationDefaultActionIdentifier,
-                  let path = response.notification.request.content.userInfo["artifacts"] as? String {
-            Task { @MainActor in AppState.model.revealArtifacts(path) }
-        }
-        completionHandler()
-    }
 }
 
 @MainActor enum AppState { static let model = HostModel() }
@@ -920,17 +838,43 @@ struct JobsMenu: View {
 
     init() {
         Self.exitIfAlreadyRunning()
+        let launchError = Self.handOverToLoginJob()
         if Notifier.available {
             let action = UNNotificationAction(identifier: "TAKE_BACK", title: "Take back now", options: [])
             let category = UNNotificationCategory(identifier: "HOST_RETURN", actions: [action], intentIdentifiers: [])
             UNUserNotificationCenter.current().setNotificationCategories([category])
             UNUserNotificationCenter.current().delegate = NotificationHandler.shared
         }
-        Task { @MainActor in AppState.model.start() }
+        Task { @MainActor in
+            if let launchError { AppState.model.actionError = launchError }
+            AppState.model.start()
+        }
     }
 
-    /// Exits 0 if an older copy is running. Zero matters: the source-install
-    /// LaunchAgent restarts the app only after a failed exit.
+    /// A copy opened by hand while Start at Login is on hands over to the
+    /// login job, so the running copy is the one launchd relaunches after a
+    /// crash. It registers again first: after an upgrade (a new signature)
+    /// launchd refuses the old registration until it is renewed, though
+    /// SMAppService still reports it enabled. Exits 0 once the job runs,
+    /// before the daemon is touched; otherwise returns why it didn't and
+    /// this copy carries on.
+    private static func handOverToLoginJob() -> String? {
+        guard !CommandLine.arguments.contains("--probe-input") else { return nil }
+        let login = AgentLoginService()
+        guard LoginItem.shouldHandOver(status: login.status, startedByAgent: LoginItem.startedByAgent(),
+                                       sourceInstall: LoginItem.sourceInstalled(),
+                                       bundled: LoginItem.bundled()) else { return nil }
+        switch LoginItem.handOver(login, reregister: true) {
+        case .running: exit(0)
+        case .needsApproval: return nil
+        case .failed(let message): return message
+        }
+    }
+
+    /// Exits 0 if an older copy is running. Zero matters: the login
+    /// LaunchAgents restart the app only after a failed exit. The login
+    /// job's copy waits for the others to exit first, since a copy that
+    /// hands over to it exits as soon as launchd has started it.
     private static func exitIfAlreadyRunning() {
         guard let id = Bundle.main.bundleIdentifier else { return }
         // Launched outside LaunchServices, as the source-install LaunchAgent
@@ -940,7 +884,10 @@ struct JobsMenu: View {
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: id)
             .filter { !$0.isTerminated }
             .map { SingleInstance.Instance(pid: $0.processIdentifier, launched: $0.launchDate) }
-        if SingleInstance.yields(me, to: others) { exit(0) }
+        guard SingleInstance.yields(me, to: others) else { return }
+        if LoginItem.startedByAgent(),
+           SingleInstance.waitForExit(others.map(\.pid).filter { $0 != me.pid }, within: 10) { return }
+        exit(0)
     }
 
     var body: some Scene {
@@ -990,6 +937,13 @@ struct JobsMenu: View {
             Divider()
             Button("Restart Daemon") { model.restart() }
                 .disabled(model.daemon.busy || model.controlling)
+            Toggle("Start at Login", isOn: Binding(get: { model.loginItem.isOn },
+                                                    set: { model.setStartAtLogin($0) }))
+                .disabled(!model.loginItem.enabled || model.controlling)
+            if let note = model.loginItem.note { Text(note) }
+            if model.loginItem.approve {
+                Button("Approve Start at Login…") { model.approveLoginItem() }
+            }
             Button("Quit Offscreen") { NSApplication.shared.terminate(nil) }
         } label: {
             let state = AppState.model.iconState

@@ -149,4 +149,17 @@ enum SingleInstance {
             return other.pid < me.pid
         }
     }
+
+    /// Waits for the other copies to exit. The login job's copy waits rather
+    /// than yield at once: a copy that turned on Start at Login exits as soon
+    /// as launchd has started the job. Returns whether they all exited.
+    static func waitForExit(_ pids: [pid_t], within seconds: Double,
+                            alive: (pid_t) -> Bool = { kill($0, 0) == 0 || errno == EPERM }) -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while true {
+            if !pids.contains(where: alive) { return true }
+            if Date() >= deadline { return false }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+    }
 }

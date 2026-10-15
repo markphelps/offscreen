@@ -98,7 +98,9 @@ homebrew_casks:
     uninstall:
       quit:
         - io.latentsignal.offscreen
+      # io.latentsignal.offscreen is the app's own Start at Login agent.
       launchctl:
+        - io.latentsignal.offscreen
         - io.latentsignal.offscreend
     zap:
       trash:
@@ -109,8 +111,11 @@ homebrew_casks:
       quarantine attribute from offscreen, offscreend and Offscreen.app so
       macOS opens them.
 
-      To start Offscreen at login, add Offscreen.app in System Settings >
-      General > Login Items & Extensions > Open at Login.
+      To start Offscreen at login, turn on Start at Login in its menu.
+      launchd then also relaunches it if it crashes. If you added Offscreen
+      to Open at Login in System Settings by hand, remove that entry. Open
+      Offscreen once after each upgrade so it renews Start at Login, and
+      turn Start at Login off before brew uninstall.
 
       After an upgrade, macOS may ask again for Local Network, Notifications
       or Input Monitoring. Grant them in System Settings > Privacy & Security.

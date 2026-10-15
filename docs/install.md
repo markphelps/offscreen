@@ -31,7 +31,9 @@ The cask installs all three parts of Offscreen, plus Tart:
 
 Offscreen is ad-hoc signed, not signed with a Developer ID or notarized. The cask removes the quarantine attribute from `offscreen`, `offscreend` and Offscreen.app so that macOS opens them, which skips Gatekeeper's check. Install it only if you trust this repository.
 
-The cask doesn't start Offscreen at login. To do that, add Offscreen.app in System Settings > General > Login Items & Extensions > Open at Login.
+Offscreen doesn't start at login until you ask it to. Turn on **Start at Login** in the Offscreen menu: Offscreen registers its own LaunchAgent (`io.latentsignal.offscreen`, inside the app) with macOS, which then starts Offscreen, and with it the daemon, at every login, and relaunches it if it crashes. **Quit Offscreen** still quits it for good. macOS lists it under System Settings > General > Login Items & Extensions; if it says the item needs approval, choose **Approve Start at Login…** in the menu. If you added Offscreen to **Open at Login** by hand, remove that entry once Start at Login is on, or a second copy starts at login and exits.
+
+Turning Start at Login on from a copy you opened yourself switches to the copy macOS started, so the menu bar icon may blink. Turning it off from the copy started at login quits Offscreen and stops the daemon, after asking; open Offscreen again to keep using it.
 
 ### Upgrade
 
@@ -40,9 +42,11 @@ brew upgrade --cask offscreen
 open -a Offscreen
 ```
 
-An upgrade quits Offscreen and reinstalls the daemon so that it matches the new CLI; open Offscreen again afterward. Because the build is ad-hoc signed, macOS may ask again for Local Network, Notifications or Input Monitoring after an upgrade. Grant them as described in [Permissions](#permissions).
+An upgrade quits Offscreen and reinstalls the daemon so that it matches the new CLI; open Offscreen again afterward. If Start at Login is on, opening Offscreen also renews it: macOS won't start an upgraded app from the old registration. Because the build is ad-hoc signed, macOS may ask again for Local Network, Notifications or Input Monitoring after an upgrade. Grant them as described in [Permissions](#permissions).
 
 ### Uninstall
+
+Turn off **Start at Login** in the Offscreen menu first, so macOS doesn't keep a login item for a deleted app. Then run:
 
 ```sh
 brew uninstall --cask offscreen
@@ -52,7 +56,7 @@ This quits Offscreen, runs `offscreen daemon uninstall`, and removes the binarie
 
 ### Don't mix Homebrew and source installs
 
-A source install and the cask install the same app identifier and the same daemon LaunchAgent, so having both leaves you with two copies of Offscreen and whichever CLI comes first on `PATH`. Before you switch, remove the other one: run `mise run uninstall` (or `scripts/install.sh uninstall`) in your checkout before installing the cask, and `brew uninstall --cask offscreen` before a source install.
+A source install and the cask install the same app identifier and the same daemon LaunchAgent, so having both leaves you with two copies of Offscreen and whichever CLI comes first on `PATH`. Before you switch, remove the other one: run `mise run uninstall` (or `scripts/install.sh uninstall`) in your checkout before installing the cask, and `brew uninstall --cask offscreen` before a source install. Turn off **Start at Login** before you remove the cask: its login agent has the same label as the source install's, and a leftover registration can make the source install fail to load its own. While a source install is present, the Start at Login checkbox is greyed out, because its LaunchAgent already starts Offscreen at login.
 
 ## Build from source
 
