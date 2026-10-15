@@ -55,7 +55,7 @@ func TestRestartMissingQueuedContractFailsOnlyThatJob(t *testing.T) {
 	ctx, stop := context.WithCancel(context.Background())
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- reopened.Serve(ctx) }()
-	require.Eventually(t, func() bool { _, err := os.Stat(socket); return err == nil }, time.Second, 10*time.Millisecond)
+	waitListening(t, socket)
 	restartedClient, err := Dial()
 	require.NoError(t, err)
 	served, err := restartedClient.Job(ctx, missing.ID)
@@ -86,7 +86,7 @@ func TestPersistenceFailureStopsServiceBeforeExecutionOrFalseCompletion(t *testi
 	go func() { serveErr <- s.Serve(ctx) }()
 	socket, err := Socket()
 	require.NoError(t, err)
-	require.Eventually(t, func() bool { _, err := os.Stat(socket); return err == nil }, time.Second, 10*time.Millisecond)
+	waitListening(t, socket)
 	client, err := Dial()
 	require.NoError(t, err)
 	// A host-lane submission stays queued until a host gate is configured.

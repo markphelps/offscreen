@@ -17,7 +17,13 @@ import SwiftUI
     // the icon in its attention state.
     private(set) var unseenFailures: Set<String> = []
     private var failures = FailureTracker()
-    private var menuObserver: NSObjectProtocol?
+    private var menuObservers: [NSObjectProtocol] = []
+    // While the menu is open, job rows keep the list and times they opened
+    // with: changing a row's title or submenu during tracking makes AppKit
+    // log "rep returned item view with wrong item". The newest list waits
+    // here until the menu closes.
+    private var openMenus = 0
+    private var heldJobs: [DaemonJob]?
 
     var iconState: IconState {
         IconState.of(jobs: jobs.active, host: status, unseenFailures: !unseenFailures.isEmpty,
@@ -53,11 +59,16 @@ import SwiftUI
 
     func start() {
         guard timer == nil else { return }
+        let center = NotificationCenter.default
+        menuObservers.append(center.addObserver(forName: NSMenu.didBeginTrackingNotification,
+                                                object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.openMenus += 1 }
+        })
         // Closing the menu acknowledges the failures it listed.
-        menuObserver = NotificationCenter.default.addObserver(forName: NSMenu.didEndTrackingNotification,
-                                                              object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.unseenFailures = [] }
-        }
+        menuObservers.append(center.addObserver(forName: NSMenu.didEndTrackingNotification,
+                                                object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.menuClosed() }
+        })
         startDaemon(.starting)
         let heartbeat = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
@@ -225,9 +236,25 @@ import SwiftUI
         if pendingReturn != new.running?.id || new.returnJob != nil { pendingReturn = "" }
     }
 
-    private func updateJobs(_ list: [DaemonJob]) {
+    private func menuClosed() {
+        openMenus = max(0, openMenus - 1)
+        guard openMenus == 0 else { return }
+        // Only the failures the menu listed count as seen; ones that arrived
+        // while it was open keep the icon's attention state.
+        unseenFailures.subtract((jobs.active + jobs.recent).map(\.id))
+        if let list = heldJobs {
+            heldJobs = nil
+            showJobs(list)
+        }
+    }
+
+    private func showJobs(_ list: [DaemonJob]) {
         now = Date()
         jobs = JobList(list)
+    }
+
+    private func updateJobs(_ list: [DaemonJob]) {
+        if openMenus > 0 { heldJobs = list } else { showJobs(list) }
         let ids = Set(list.map(\.id))
         unseenFailures.formIntersection(ids)
         cancelling.formIntersection(ids)

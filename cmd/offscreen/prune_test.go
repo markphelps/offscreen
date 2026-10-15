@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -168,7 +169,15 @@ func TestPrunePreviewAndApplyAgainstIsolatedDaemon(t *testing.T) {
 	defer func() { cancel(); <-served; require.NoError(t, server.Close()) }()
 	socket, err := daemon.Socket()
 	require.NoError(t, err)
-	require.Eventually(t, func() bool { _, err := os.Stat(socket); return err == nil }, 2*time.Second, 10*time.Millisecond)
+	// The socket file appears at bind, before listen; wait for a connection.
+	require.Eventually(t, func() bool {
+		conn, err := net.Dial("unix", socket)
+		if err != nil {
+			return false
+		}
+		_ = conn.Close()
+		return true
+	}, 2*time.Second, 10*time.Millisecond)
 	client, err := daemon.Dial()
 	require.NoError(t, err)
 

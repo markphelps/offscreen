@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,10 +51,24 @@ func serveFixture(t *testing.T, s *Server) Client {
 	t.Cleanup(func() { cancel(); <-done; require.NoError(t, s.Close()) })
 	socket, err := Socket()
 	require.NoError(t, err)
-	require.Eventually(t, func() bool { _, err := os.Stat(socket); return err == nil }, time.Second, 10*time.Millisecond)
+	waitListening(t, socket)
 	client, err := Dial()
 	require.NoError(t, err)
 	return client
+}
+
+// waitListening waits until the server accepts connections. The socket file
+// appears at bind, before listen, so its existence alone isn't enough.
+func waitListening(t *testing.T, socket string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		conn, err := net.Dial("unix", socket)
+		if err != nil {
+			return false
+		}
+		_ = conn.Close()
+		return true
+	}, time.Second, 10*time.Millisecond)
 }
 
 func submitFixture(t *testing.T, c Client, root string, req Request) Job {
