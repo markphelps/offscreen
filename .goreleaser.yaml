@@ -46,7 +46,7 @@ homebrew_casks:
   - name: offscreen
     ids: [offscreen]
     homepage: https://github.com/markphelps/offscreen
-    description: Run Mac GUI jobs in disposable virtual machines
+    description: Run GUI jobs in disposable virtual machines
     directory: Casks
     url:
       template: "https://github.com/markphelps/offscreen/releases/download/\
@@ -54,17 +54,63 @@ homebrew_casks:
     binaries:
       - offscreen
       - offscreend
+    # The free GoReleaser has no app field and binaries can't be renamed, so
+    # the app and the ofs alias go in a custom block. Offscreen.app needs
+    # macOS 14 (app/Package.swift).
+    custom_block: |
+      depends_on macos: ">= :sonoma"
+      app "Offscreen.app"
+      binary "offscreen", target: "ofs"
+    dependencies:
+      - formula: cirruslabs/cli/tart
     repository:
       owner: markphelps
       name: homebrew-tap
       branch: main
+      # Set by the release workflow; snapshots never publish, so never read it.
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     hooks:
+      # The build is ad-hoc signed, so strip quarantine or Gatekeeper blocks it.
+      # Then reinstall the daemon so it matches the CLI after every upgrade.
+      # The LaunchAgent records this PATH, and the daemon finds Tart through it.
       post:
         install: |
-          if OS.mac?
-            ["offscreen", "offscreend"].each do |binary|
-              system_command "/usr/bin/xattr",
-                             args: ["-dr", "com.apple.quarantine",
-                                    "#{staged_path}/#{binary}"]
-            end
+          ["#{staged_path}/offscreen", "#{staged_path}/offscreend",
+           "#{appdir}/Offscreen.app"].each do |path|
+            system_command "/usr/bin/xattr",
+                           args: ["-dr", "com.apple.quarantine", path]
           end
+          path = ["#{HOMEBREW_PREFIX}/bin", "#{HOMEBREW_PREFIX}/sbin",
+                  "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":")
+          result = system_command "#{staged_path}/offscreen",
+                                  args:         ["daemon", "install"],
+                                  env:          { "PATH" => path },
+                                  print_stderr: true
+          unless result.success?
+            opoo "offscreen daemon install failed; run it again to fix it."
+          end
+      # Runs before the binaries are removed.
+      pre:
+        uninstall: |
+          system_command "#{staged_path}/offscreen",
+                         args:         ["daemon", "uninstall"],
+                         print_stderr: true
+    uninstall:
+      quit:
+        - io.latentsignal.offscreen
+      launchctl:
+        - io.latentsignal.offscreend
+    zap:
+      trash:
+        - ~/Library/Application Support/offscreen
+        - ~/Library/Preferences/io.latentsignal.offscreen.plist
+    caveats: |
+      Offscreen is ad-hoc signed, not notarized. This cask removes the
+      quarantine attribute from offscreen, offscreend and Offscreen.app so
+      macOS opens them.
+
+      To start Offscreen at login, add Offscreen.app in System Settings >
+      General > Login Items & Extensions > Open at Login.
+
+      After an upgrade, macOS may ask again for Local Network, Notifications
+      or Input Monitoring. Grant them in System Settings > Privacy & Security.
