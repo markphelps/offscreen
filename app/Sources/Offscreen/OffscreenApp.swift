@@ -43,13 +43,13 @@ import SwiftUI
     // The app owns the daemon: it starts it at launch and stops it at quit.
     var daemon: DaemonState = .starting
     private let control: any DaemonLauncher
-    private let confirm: @MainActor (Confirmation) -> Bool
+    private let confirm: @MainActor (Confirmation) async -> Bool
+    private let alert = ConfirmationAlert()
     // Logout, restart and shutdown wait this long for the daemon to exit,
     // so loginwindow never gives up on the app.
     private let sessionStopLimit: Double
     // Set once a logout, restart or shutdown quits the app.
     private var sessionEnding = false
-    private var prompting = false
     private static let log = Logger(subsystem: "io.latentsignal.offscreen", category: "daemon")
     private var daemonVersion: DaemonVersion?
     // A daemon that is starting gets this long to answer before the menu
@@ -85,11 +85,11 @@ import SwiftUI
          verifiedFilter: Bool = UserDefaults.standard.bool(forKey: "VerifiedInputFilter"),
          post: @escaping @MainActor (UNNotificationRequest) -> Void = Notifier.post,
          control: any DaemonLauncher = DaemonControl(),
-         confirm: @escaping @MainActor (Confirmation) -> Bool = HostModel.runAlert,
+         confirm: (@MainActor (Confirmation) async -> Bool)? = nil,
          sessionStopLimit: Double = 5) {
         self.bridge = bridge
         self.control = control
-        self.confirm = confirm
+        self.confirm = confirm ?? { [alert] in await alert.ask($0) }
         self.sessionStopLimit = sessionStopLimit
         self.manualReturn = manualReturn
         self.verifiedFilter = verifiedFilter
@@ -387,7 +387,7 @@ extension HostModel {
             // A session quit that arrived meanwhile closed the alert.
             return sessionEnding
         case .failed(let error):
-            let quit = ask(Confirmation(message: "The daemon didn't stop",
+            let quit = await ask(Confirmation(message: "The daemon didn't stop",
                                         detail: "\(error)\nQuitting Offscreen leaves it running.",
                                         confirm: "Quit Anyway", decline: "Don't Quit"))
             if !quit { finishControl() }
@@ -440,7 +440,7 @@ extension HostModel {
         let active = ((try? await Blocking.run { try bridge.jobs() }) ?? []).filter(\.active)
         if !active.isEmpty {
             let detail = "\(verb == "Quit" ? "Quitting Offscreen" : "Restarting") stops the daemon. Cancelled jobs stop and their VM clones are deleted."
-            guard ask(Confirmation(message: QuitPrompt.message(verb: verb, count: active.count), detail: detail,
+            guard await ask(Confirmation(message: QuitPrompt.message(verb: verb, count: active.count), detail: detail,
                                    confirm: "\(verb) and Cancel Jobs", decline: "Don't \(verb)")) else {
                 finishControl()
                 return .declined
@@ -470,7 +470,7 @@ extension HostModel {
             if !failures.isEmpty { break }
         }
         if !failures.isEmpty {
-            guard ask(Confirmation(message: "Some jobs couldn't be cancelled", detail: failures.joined(separator: "\n"),
+            guard await ask(Confirmation(message: "Some jobs couldn't be cancelled", detail: failures.joined(separator: "\n"),
                                    confirm: "\(verb) Anyway", decline: "Don't \(verb)")) else {
                 finishControl()
                 return .declined
@@ -496,27 +496,59 @@ extension HostModel {
 
     /// Asks with the confirm closure. Declines without asking once the
     /// session is ending.
-    private func ask(_ question: Confirmation) -> Bool {
+    private func ask(_ question: Confirmation) async -> Bool {
         guard !sessionEnding else { return false }
-        prompting = true
-        defer { prompting = false }
-        return confirm(question) && !sessionEnding
+        return await confirm(question) && !sessionEnding
     }
 
     /// Closes an open Restart or Quit alert as declined.
     private func closePrompt() {
-        if prompting, NSApp?.modalWindow != nil { NSApp.abortModal() }
+        alert.dismiss()
     }
+}
 
-    static func runAlert(_ question: Confirmation) -> Bool {
-        // A menu bar app is never frontmost on its own; the alert must be.
-        NSApp.activate()
+/// The Restart and Quit confirmations. The alert is shown as an ordinary
+/// window, not with runModal: during a modal session AppKit cancels the quit
+/// event that logout sends without asking the delegate, which interrupts
+/// logout.
+@MainActor final class ConfirmationAlert: NSObject {
+    private var shown: NSAlert?
+    private var answer: CheckedContinuation<Bool, Never>?
+
+    func ask(_ question: Confirmation) async -> Bool {
+        dismiss()
         let alert = NSAlert()
         alert.messageText = question.message
         alert.informativeText = question.detail
-        alert.addButton(withTitle: question.confirm)
-        alert.addButton(withTitle: question.decline)
-        return alert.runModal() == .alertFirstButtonReturn
+        let confirm = alert.addButton(withTitle: question.confirm)
+        let decline = alert.addButton(withTitle: question.decline)
+        confirm.target = self
+        confirm.action = #selector(confirmed)
+        decline.target = self
+        decline.action = #selector(declined)
+        decline.keyEquivalent = "\u{1b}"
+        alert.layout()
+        alert.window.level = .modalPanel
+        alert.window.center()
+        shown = alert
+        // A menu bar app is never frontmost on its own; the alert must be.
+        NSApp.activate()
+        alert.window.makeKeyAndOrderFront(nil)
+        return await withCheckedContinuation { answer = $0 }
+    }
+
+    /// Closes the alert, if one is up, as declined.
+    func dismiss() { finish(false) }
+
+    @objc private func confirmed() { finish(true) }
+    @objc private func declined() { finish(false) }
+
+    private func finish(_ result: Bool) {
+        shown?.window.orderOut(nil)
+        shown = nil
+        let pending = answer
+        answer = nil
+        pending?.resume(returning: result)
     }
 }
 
