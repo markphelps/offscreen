@@ -50,13 +50,23 @@ type Task struct {
 	Run  string `toml:"run"`
 }
 
-// Discover locates a contract. With worktree set it must be in that exact
-// directory; otherwise the search walks from start to the filesystem root.
-// projectName is the CLI's <project> argument and must match the contract.
+// Discover locates a contract like Find. projectName is the CLI's <project>
+// argument and must match the contract.
 func Discover(start, worktree, projectName string) (Contract, error) {
 	if projectName == "" {
 		return Contract{}, errors.New("project name is required")
 	}
+	cfg, err := Find(start, worktree)
+	if err != nil {
+		return Contract{}, err
+	}
+	return matchProject(cfg, projectName)
+}
+
+// Find locates and validates a contract. With worktree set it must be in that
+// exact directory; otherwise the search walks from start to the filesystem
+// root. An empty start means the current directory.
+func Find(start, worktree string) (Contract, error) {
 	if worktree != "" {
 		root, err := filepath.Abs(worktree)
 		if err != nil {
@@ -66,10 +76,7 @@ func Discover(start, worktree, projectName string) (Contract, error) {
 		if errors.Is(err, fs.ErrNotExist) {
 			return Contract{}, fmt.Errorf("worktree %q has no %s: %w", root, FileName, err)
 		}
-		if err != nil {
-			return Contract{}, err
-		}
-		return matchProject(cfg, projectName)
+		return cfg, err
 	}
 	if start == "" {
 		var err error
@@ -85,7 +92,7 @@ func Discover(start, worktree, projectName string) (Contract, error) {
 	for {
 		cfg, err := LoadFile(filepath.Join(root, FileName))
 		if err == nil {
-			return matchProject(cfg, projectName)
+			return cfg, nil
 		}
 		if !errors.Is(err, fs.ErrNotExist) {
 			return Contract{}, err

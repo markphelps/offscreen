@@ -15,6 +15,19 @@ func sample(t *testing.T) Contract {
 	return cfg
 }
 
+func TestFindIgnoresProjectName(t *testing.T) {
+	root := t.TempDir()
+	child := filepath.Join(root, "nested")
+	require.NoError(t, os.Mkdir(child, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, FileName), []byte("project = 'sample'\n"), 0o600))
+	got, err := Find(child, "")
+	require.NoError(t, err)
+	require.Equal(t, root, got.Root)
+	require.Equal(t, "sample", got.Project)
+	_, err = Find(child, child)
+	require.ErrorContains(t, err, "has no .offscreen.toml")
+}
+
 func TestDiscover(t *testing.T) {
 	root := t.TempDir()
 	child := filepath.Join(root, "nested", "deeper")
