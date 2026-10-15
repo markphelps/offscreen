@@ -27,7 +27,7 @@ codesign --verify --strict .build/Offscreen.app
 codesign -d -r - .build/Offscreen.app
 ```
 
-The bundle has the fixed identifier `io.latentsignal.offscreen`. Its ad-hoc signature uses an identifier-based designated requirement so local rebuilds keep the same permission identity. It is not notarized. The Info.plist sets `LSUIElement`, so the app stays in the menu bar without a Dock icon. The bundle step creates only `app/.build/Offscreen.app`.
+The bundle has the fixed identifier `io.latentsignal.offscreen`. Its ad-hoc signature uses an identifier-based designated requirement so local rebuilds keep the same permission identity. It is not notarized. The Info.plist sets `LSUIElement`, so the app stays in the menu bar without a Dock icon. The bundle step creates only `app/.build/Offscreen.app`. Its icon is the committed `Resources/AppIcon.icns`; after changing `docs/assets/icon.svg`, regenerate it with `./scripts/icon.sh`.
 
 `mise run install` from the repository root (without mise: `scripts/install.sh`) builds this bundle, copies it to `~/Applications/Offscreen.app`, registers it with Launch Services and loads its LaunchAgent, together with the CLI and daemon. It first stops any running Offscreen, including one opened with `open -a`, so only one instance runs. `mise run uninstall` removes all of them. Reinstall after a rebuild. The script refuses to replace an app or agent with another identifier. If macOS asks for Local Network access while running VM jobs, grant it to **Offscreen Daemon**, not Offscreen; this is independent of the app's permissions below.
 

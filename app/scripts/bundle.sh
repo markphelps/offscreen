@@ -7,8 +7,9 @@ label=io.latentsignal.offscreen
 # The menu compares this with the daemon's build (diagnostics only, as in
 # scripts/install.sh) to say when the daemon needs a restart.
 build=$(git -C "$root" describe --tags --always --dirty 2>/dev/null || echo dev)
-mkdir -p "$app/Contents/MacOS"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bindir/Offscreen" "$app/Contents/MacOS/Offscreen"
+cp "$root/Resources/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -17,6 +18,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <key>CFBundleName</key><string>Offscreen</string>
 <key>CFBundleDisplayName</key><string>Offscreen</string>
 <key>CFBundleExecutable</key><string>Offscreen</string>
+<key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleVersion</key><string>1</string>
 <key>CFBundleShortVersionString</key><string>1.0</string>
