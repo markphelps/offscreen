@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+# Never run two releases at once, and never cancel one partway through
+# publishing.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # The GoReleaser before hook builds Offscreen.app, which needs Swift 6.2;
+    # macos-26's default Xcode provides it.
+    runs-on: macos-26
+    permissions:
+      contents: write
+    steps:
+      # Fail before any work if the tap token is missing: without it GoReleaser
+      # would publish the GitHub release and then fail to push the cask.
+      - name: Check the Homebrew tap token
+        env:
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_GITHUB_TOKEN" ]; then
+            echo "::error::The HOMEBREW_TAP_GITHUB_TOKEN secret is not set." \
+              "Add an Actions secret with contents write access to" \
+              "markphelps/homebrew-tap."
+            exit 1
+          fi
+      # Full history and tags, so GoReleaser gets the right version and
+      # changelog.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # GoReleaser publishes through the API with GITHUB_TOKEN; git
+          # needs no stored credentials.
+          persist-credentials: false
+      # No tool cache: a cache written by another workflow must not feed a
+      # job that holds release and tap tokens.
+      - uses: jdx/mise-action@v3
+        with:
+          install_args: go goreleaser
+          cache: false
+      - name: Go and Swift unit tests
+        run: mise run test
+      - name: GoReleaser
+        run: goreleaser release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
