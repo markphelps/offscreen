@@ -1,11 +1,13 @@
 # Command reference
 
-Run from a directory under a repo containing `.offscreen.toml`, or pass `--worktree` to point at one. The `<project>` argument must match the file's `project` key. Run `offscreen --help` or `offscreen <command> --help` for flag syntax.
+Run from a directory under a repo containing `.offscreen.toml`, or pass `--worktree` to point at one. The `<project>` argument must match the file's `project` key. Run `offscreen --help` or `offscreen <command> --help` for flag syntax. `ofs` is a shorter name for `offscreen`; both install methods add it ([install guide](install.md)).
 
 | Command | What it does |
 | --- | --- |
 | `offscreen run <project> <task>` | Queue a named task, stream output, and wait for its result. |
 | `offscreen run <project> -- <cmd> [args...]` | Run an argv command directly; defaults to the VM lane. |
+| `offscreen init` | Write a starter `.offscreen.toml` in the current directory. Only `project` is set, from `--project` or the directory's name; every other section is commented out with instructions. Refuses to replace an existing file unless `-f`/`--force` is given. Prints the path and next step on stderr; stdout stays empty. |
+| `offscreen check` | Find and validate `.offscreen.toml` the same way `run` does (walking up from the current directory, or the exact `--worktree` directory) without contacting the daemon. Prints the file's path, project name and each task with its lane on stdout. An invalid or missing contract prints the problem, such as unknown keys, on stderr and exits `1`. |
 | `offscreen status` | List queued and active jobs, newest first, with lane, state, age, and waiting reason. Failed `--keep` jobs whose clone is still retained are listed too, as `failed (retained)`, until cancelled. `-a` also lists completed jobs. |
 | `offscreen logs <job>` | Print the job's stdout/stderr so far and exit. `-f`/`--follow` keeps printing until the job ends. |
 | `offscreen artifacts <job>` | Print the job's artifact directory. |

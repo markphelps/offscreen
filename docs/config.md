@@ -4,6 +4,8 @@ Offscreen reads two TOML files: a **project contract** (`.offscreen.toml` in you
 
 ## Project contract
 
+`offscreen init` writes a starter file with only `project` set and every other section below commented out with instructions. After editing, `offscreen check` validates it and lists its tasks without starting a VM. A filled-in contract:
+
 ```toml
 project = "hello"
 exclusive = false

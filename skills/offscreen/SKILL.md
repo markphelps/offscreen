@@ -35,7 +35,7 @@ To check what a UI looks like, run a task that launches the app and saves a scre
 | The command's own code | The command ran. Nonzero means it failed, for example a test failure. | Treat it like any test run: read the output and fix the code. |
 | `75` | The job waited in the queue past `--timeout`. | Other jobs hold the VM slots. Check `offscreen status`, then retry or ask the user. |
 | `70` | Offscreen itself failed: daemon, VM, `[prepare]`, or cleanup. | Not a test failure. See Troubleshooting. |
-| `1` | Usage or config error. | Check the project name, task name, and `.offscreen.toml`. |
+| `1` | Usage or config error. | Check the project name and task name, and run `offscreen check` to validate `.offscreen.toml`. |
 
 Tasks write screenshots and test results to `$OFFSCREEN_OUT`. After a job finishes, find them with:
 
@@ -83,7 +83,15 @@ These affect the user's machine, desktop, or shared state. Don't run them withou
 
 ## Setting up a project
 
-When the user asks to add offscreen to a repo, create `.offscreen.toml` at the repo root:
+When the user asks to add offscreen to a repo:
+
+1. Run `ofs init` at the repo root. It writes `.offscreen.toml` with only `project` set (the directory's name; `--project` overrides it) and every other section commented out with instructions. It won't replace an existing file without `--force`.
+2. Work out what the repo needs offscreen for (UI tests, launching the app for screenshots, one-off commands), then uncomment and fill in only those sections. Read the repo's build and test setup first; don't guess scheme names, paths or commands. Write task scripts the task's `run` calls.
+3. Run `ofs check`. It validates the file and lists its tasks without starting a VM. Fix anything it reports; it exits `1` and names the problem, such as an unknown key.
+4. Run each new task for real with `ofs run <project> <task>`, and fix it until it passes.
+5. Offer to add a line to the repo's `AGENTS.md` or `CLAUDE.md` (see below).
+
+A filled-in contract for UI tests:
 
 ```toml
 project = "myapp"
@@ -133,7 +141,7 @@ Rules for the contract:
 - Set `exclusive = true` if the project's jobs must not overlap.
 - Every task gets `OFFSCREEN_OUT`, `OFFSCREEN_JOB`, `OFFSCREEN_LANE` and `OFFSCREEN_CACHE`.
 
-Then verify it with `offscreen run myapp test-ui`. Offer to add a line like this to the repo's `AGENTS.md` or `CLAUDE.md`:
+Then validate it with `ofs check` and verify it with `ofs run myapp test-ui`. Offer to add a line like this to the repo's `AGENTS.md` or `CLAUDE.md`:
 
 ```md
 Run UI tests with `offscreen run myapp test-ui`. Never run `xcodebuild test` directly; it takes over the user's screen.

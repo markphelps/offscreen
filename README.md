@@ -41,6 +41,8 @@ open -a Offscreen          # if macOS asks, allow "Offscreen Daemon" on the Loca
 offscreen image build      # one-time: pulls a macOS + Xcode image, takes a while, go grab lunch
 ```
 
+The install also adds `ofs` as a shorter name for `offscreen`, so `ofs run hello test-ui` works too.
+
 Then try it on the example app. The example lives in this repository, so clone it to get the project; you don't build Offscreen itself:
 
 ```sh
@@ -64,7 +66,14 @@ Anything that needs a logged-in Mac desktop:
 
 ## Use it in your repo
 
-Add a `.offscreen.toml` at the repo root:
+At the repo root, write a starter `.offscreen.toml`, fill it in, and check it:
+
+```sh
+ofs init     # writes .offscreen.toml with every section commented out
+ofs check    # validates it and lists its tasks, without starting a VM
+```
+
+A filled-in contract looks like this:
 
 ```toml
 project = "myapp"
@@ -111,6 +120,8 @@ Run UI tests with `offscreen run myapp ui`. Never run `xcodebuild test` directly
 | --- | --- |
 | `offscreen run <project> <task>` | Queue a named task, stream output, and wait for its result. |
 | `offscreen run <project> -- <cmd>` | Run a one-off command in a VM. |
+| `offscreen init` | Write a starter `.offscreen.toml` in the current directory. |
+| `offscreen check` | Validate `.offscreen.toml` and list its tasks, without starting a VM. |
 | `offscreen status` | List queued and active jobs; `-a` adds completed ones. |
 | `offscreen logs <job>` | Print a job's output so far; `-f` follows it. |
 | `offscreen artifacts <job>` | Print a job's artifact directory. |
