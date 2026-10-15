@@ -1,14 +1,14 @@
 import Foundation
 import Darwin
 
-struct HostJob: Decodable, Sendable {
+struct HostJob: Decodable, Sendable, Equatable {
     let id: String
     let project: String
     let task: String
     let state: String
 }
 
-struct HostStatus: Decodable, Sendable {
+struct HostStatus: Decodable, Sendable, Equatable {
     let queued: Int
     let running: HostJob?
     let waitingReason: String

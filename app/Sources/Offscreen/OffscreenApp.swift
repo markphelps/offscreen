@@ -21,7 +21,9 @@ import SwiftUI
     // While the menu is open, job rows keep the list and times they opened
     // with: changing a row's title or submenu during tracking makes AppKit
     // log "rep returned item view with wrong item". The newest list waits
-    // here until the menu closes.
+    // here until the menu closes. The heartbeat also writes only values that
+    // changed: any write the menu reads rebuilds it, which closes an open
+    // job submenu.
     private var openMenus = 0
     private var heldJobs: [DaemonJob]?
 
@@ -191,7 +193,7 @@ import SwiftUI
                     guard !self.controlling else { return }
                     if let version { self.daemonVersion = version }
                     if let current = self.daemonVersion {
-                        self.daemon = DaemonState.reachable(daemon: current.version, app: self.appBuild)
+                        self.assign(\.daemon, DaemonState.reachable(daemon: current.version, app: self.appBuild))
                     }
                     self.hostActive = HostSensing.hostActive(state)
                     self.update(state)
@@ -208,8 +210,8 @@ import SwiftUI
                     self.refreshing = false
                     self.refreshAfterInput = false
                     guard !self.controlling else { return }
-                    self.status = nil
-                    self.jobs = JobList()
+                    self.assign(\.status, nil)
+                    self.assign(\.jobs, JobList())
                     self.countdownPanel?.hide()
                     self.daemonVersion = nil
                     if case .notResponding = self.daemon { return }
@@ -220,7 +222,7 @@ import SwiftUI
     }
 
     private func update(_ new: HostStatus) {
-        status = new
+        assign(\.status, new)
         updateCountdownPanel(new)
         if let id = new.returnJob, id != previousNotice {
             previousNotice = id
@@ -250,14 +252,14 @@ import SwiftUI
 
     private func showJobs(_ list: [DaemonJob]) {
         now = Date()
-        jobs = JobList(list)
+        assign(\.jobs, JobList(list))
     }
 
     private func updateJobs(_ list: [DaemonJob]) {
         if openMenus > 0 { heldJobs = list } else { showJobs(list) }
         let ids = Set(list.map(\.id))
-        unseenFailures.formIntersection(ids)
-        cancelling.formIntersection(ids)
+        assign(\.unseenFailures, unseenFailures.intersection(ids))
+        assign(\.cancelling, cancelling.intersection(ids))
         for job in failures.newFailures(in: list) {
             unseenFailures.insert(job.id)
             notifyFailure(job)
@@ -413,6 +415,15 @@ import SwiftUI
                                                      verified: verifiedFilter) else { return }
         pendingReturn = id
         action("return", job: id)
+    }
+}
+
+extension HostModel {
+    /// Writes only a changed value, so observers such as the open menu don't
+    /// rebuild for nothing. Passing the property inout would not do: that
+    /// goes through the observable modify accessor, which always notifies.
+    fileprivate func assign<T: Equatable>(_ key: ReferenceWritableKeyPath<HostModel, T>, _ value: T) {
+        if self[keyPath: key] != value { self[keyPath: key] = value }
     }
 }
 
