@@ -170,6 +170,20 @@ final class OffscreenTests: XCTestCase {
         XCTAssertFalse(QuitPrompt.systemQuit(reason: nil))
     }
 
+    func testOnlyTheNewerCopyYieldsToAnotherInstance() {
+        let older = SingleInstance.Instance(pid: 200, launched: Date(timeIntervalSince1970: 100))
+        let newer = SingleInstance.Instance(pid: 100, launched: Date(timeIntervalSince1970: 200))
+        XCTAssertTrue(SingleInstance.yields(newer, to: [older, newer]))
+        XCTAssertFalse(SingleInstance.yields(older, to: [older, newer]))
+        XCTAssertFalse(SingleInstance.yields(older, to: [older]), "the copy itself doesn't count")
+
+        // Same or missing launch dates fall back to pid, so exactly one stays.
+        let agent = SingleInstance.Instance(pid: 50, launched: nil)
+        let opened = SingleInstance.Instance(pid: 60, launched: Date())
+        XCTAssertTrue(SingleInstance.yields(opened, to: [agent, opened]))
+        XCTAssertFalse(SingleInstance.yields(agent, to: [agent, opened]))
+    }
+
     func testMenuBarIconMarksTheFrontDisplayOnlyForAttention() {
         let attention = menuBarAlpha(running: true, attention: true)
         XCTAssertEqual(menuBarAlpha(running: true)(18, 22), 0, "front display is empty")

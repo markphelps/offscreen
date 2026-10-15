@@ -42,7 +42,15 @@ import SwiftUI
     }
     // The app owns the daemon: it starts it at launch and stops it at quit.
     var daemon: DaemonState = .starting
-    private let control = DaemonControl()
+    private let control: any DaemonLauncher
+    private let confirm: @MainActor (Confirmation) -> Bool
+    // Logout, restart and shutdown wait this long for the daemon to exit,
+    // so loginwindow never gives up on the app.
+    private let sessionStopLimit: Double
+    // Set once a logout, restart or shutdown quits the app.
+    private var sessionEnding = false
+    private var prompting = false
+    private static let log = Logger(subsystem: "io.latentsignal.offscreen", category: "daemon")
     private var daemonVersion: DaemonVersion?
     // A daemon that is starting gets this long to answer before the menu
     // says it isn't responding.
@@ -72,8 +80,14 @@ import SwiftUI
     init(bridge: any HostBridge = Bridge(socketPath: Bridge.defaultSocket()),
          manualReturn: Bool = UserDefaults.standard.bool(forKey: "ManualReturn"),
          verifiedFilter: Bool = UserDefaults.standard.bool(forKey: "VerifiedInputFilter"),
-         post: @escaping @MainActor (UNNotificationRequest) -> Void = Notifier.post) {
+         post: @escaping @MainActor (UNNotificationRequest) -> Void = Notifier.post,
+         control: any DaemonLauncher = DaemonControl(),
+         confirm: @escaping @MainActor (Confirmation) -> Bool = HostModel.runAlert,
+         sessionStopLimit: Double = 5) {
         self.bridge = bridge
+        self.control = control
+        self.confirm = confirm
+        self.sessionStopLimit = sessionStopLimit
         self.manualReturn = manualReturn
         self.verifiedFilter = verifiedFilter
         self.post = post
@@ -89,6 +103,13 @@ import SwiftUI
         menuObservers.append(center.addObserver(forName: NSMenu.didEndTrackingNotification,
                                                 object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.menuClosed() }
+        })
+        // Logout can start while a Restart or Quit alert is up. Its quit
+        // event may wait for the alert, so close it now rather than block
+        // logout. Only the alert is closed: logout can still be cancelled.
+        menuObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.willPowerOffNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.closePrompt() }
         })
         startDaemon(.starting)
         let heartbeat = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
@@ -112,84 +133,6 @@ import SwiftUI
                 daemon = .notResponding("\(error)")
             }
         }
-    }
-
-    /// Restart Daemon: the same confirm-and-cancel as quit, then a new process.
-    func restart() {
-        guard !controlling else { return }
-        Task {
-            guard await shutDown(verb: "Restart", systemQuit: false) else { return }
-            startDaemon(.restarting)
-            controlling = false
-        }
-    }
-
-    /// Cancels active jobs through the daemon's cancel path, so VM clones are
-    /// deleted and host guardians stop, then stops the daemon. Asks first
-    /// unless the session is ending. Returns false if the user declined.
-    func shutDown(verb: String, systemQuit: Bool) async -> Bool {
-        controlling = true
-        let bridge = self.bridge
-        let active = ((try? await Blocking.run { try bridge.jobs() }) ?? []).filter(\.active)
-        if !active.isEmpty && !systemQuit {
-            let detail = "\(verb == "Quit" ? "Quitting Offscreen" : "Restarting") stops the daemon. Cancelled jobs stop and their VM clones are deleted."
-            guard ask(QuitPrompt.message(verb: verb, count: active.count), detail: detail,
-                      confirm: "\(verb) and Cancel Jobs", decline: "Don't \(verb)") else {
-                controlling = false
-                return false
-            }
-        }
-        daemon = verb == "Quit" ? .stopping : .restarting
-        // Repeat in case a job was submitted while the first pass ran.
-        var failures: [String] = []
-        for _ in 0..<3 {
-            let jobs = ((try? await Blocking.run { try bridge.jobs() }) ?? []).filter(\.active)
-            if jobs.isEmpty { break }
-            failures = await withTaskGroup(of: String?.self) { group in
-                for job in jobs {
-                    group.addTask {
-                        do {
-                            try await Blocking.run { try bridge.cancel(job.id) }
-                            return nil
-                        } catch {
-                            return "\(job.id): \(error)"
-                        }
-                    }
-                }
-                var failed: [String] = []
-                for await failure in group { if let failure { failed.append(failure) } }
-                return failed
-            }
-            if !failures.isEmpty { break }
-        }
-        if !failures.isEmpty && !systemQuit {
-            guard ask("Some jobs couldn't be cancelled", detail: failures.joined(separator: "\n"),
-                      confirm: "\(verb) Anyway", decline: "Don't \(verb)") else {
-                controlling = false
-                return false
-            }
-        }
-        let control = self.control
-        do {
-            try await Blocking.run { try control.stop() }
-        } catch {
-            daemon = .notResponding("\(error)")
-        }
-        status = nil
-        jobs = JobList()
-        countdownPanel?.hide()
-        return true
-    }
-
-    private func ask(_ message: String, detail: String, confirm: String, decline: String) -> Bool {
-        // A menu bar app is never frontmost on its own; the alert must be.
-        NSApp.activate()
-        let alert = NSAlert()
-        alert.messageText = message
-        alert.informativeText = detail
-        alert.addButton(withTitle: confirm)
-        alert.addButton(withTitle: decline)
-        return alert.runModal() == .alertFirstButtonReturn
     }
 
     @discardableResult
@@ -403,6 +346,172 @@ import SwiftUI
     }
 }
 
+// Quit, Restart Daemon and session end.
+extension HostModel {
+    /// Restart Daemon: the same confirm-and-cancel as quit, then a new
+    /// process. A daemon that didn't stop is reported, not restarted.
+    @discardableResult
+    func restart() -> Task<Void, Never>? {
+        guard !controlling else { return nil }
+        return Task {
+            switch await shutDown(verb: "Restart") {
+            case .declined:
+                break
+            case .failed(let error):
+                actionError = "Restart failed: \(error)"
+                finishControl()
+            case .stopped:
+                guard !sessionEnding else { return }
+                startDaemon(.restarting)
+                controlling = false
+            }
+        }
+    }
+
+    /// Quit Offscreen. Returns whether the app may terminate. A user quit asks
+    /// before leaving a daemon that didn't stop; a session quit never asks.
+    func quit(systemQuit: Bool) async -> Bool {
+        if systemQuit { return await endSession() }
+        switch await shutDown(verb: "Quit") {
+        case .stopped:
+            return true
+        case .declined:
+            // A session quit that arrived meanwhile closed the alert.
+            return sessionEnding
+        case .failed(let error):
+            let quit = ask(Confirmation(message: "The daemon didn't stop",
+                                        detail: "\(error)\nQuitting Offscreen leaves it running.",
+                                        confirm: "Quit Anyway", decline: "Don't Quit"))
+            if !quit { finishControl() }
+            return quit || sessionEnding
+        }
+    }
+
+    /// Logout, restart or shutdown: sends the daemon SIGTERM and waits at
+    /// most sessionStopLimit for it to exit. It skips the cancel passes,
+    /// which can take minutes; the daemon fails its in-flight jobs and
+    /// deletes their clones the next time it starts. It doesn't wait for a
+    /// restart in progress, and stops one from starting the daemon again.
+    func endSession() async -> Bool {
+        sessionEnding = true
+        controlling = true
+        closePrompt()
+        daemon = .stopping
+        countdownPanel?.hide()
+        let control = self.control
+        let limit = sessionStopLimit
+        let result = await Blocking.run(within: limit) { () -> String? in
+            do {
+                try control.stop(within: limit)
+                return nil
+            } catch {
+                return "\(error)"
+            }
+        }
+        switch result {
+        case nil: Self.log.warning("daemon didn't stop within \(limit)s of session end")
+        case let error??: Self.log.warning("daemon stop at session end failed: \(error, privacy: .public)")
+        case .some(nil): break
+        }
+        return true
+    }
+
+    enum ShutdownResult: Equatable {
+        case stopped
+        case declined
+        case failed(String)
+    }
+
+    /// Cancels active jobs through the daemon's cancel path, so VM clones are
+    /// deleted and host guardians stop, then stops the daemon. Asks first if
+    /// jobs are active. A failed stop leaves `controlling` set for the caller
+    /// to clear.
+    func shutDown(verb: String) async -> ShutdownResult {
+        controlling = true
+        let bridge = self.bridge
+        let active = ((try? await Blocking.run { try bridge.jobs() }) ?? []).filter(\.active)
+        if !active.isEmpty {
+            let detail = "\(verb == "Quit" ? "Quitting Offscreen" : "Restarting") stops the daemon. Cancelled jobs stop and their VM clones are deleted."
+            guard ask(Confirmation(message: QuitPrompt.message(verb: verb, count: active.count), detail: detail,
+                                   confirm: "\(verb) and Cancel Jobs", decline: "Don't \(verb)")) else {
+                finishControl()
+                return .declined
+            }
+        }
+        daemon = verb == "Quit" ? .stopping : .restarting
+        // Repeat in case a job was submitted while the first pass ran.
+        var failures: [String] = []
+        for _ in 0..<3 {
+            let jobs = ((try? await Blocking.run { try bridge.jobs() }) ?? []).filter(\.active)
+            if jobs.isEmpty { break }
+            failures = await withTaskGroup(of: String?.self) { group in
+                for job in jobs {
+                    group.addTask {
+                        do {
+                            try await Blocking.run { try bridge.cancel(job.id) }
+                            return nil
+                        } catch {
+                            return "\(job.id): \(error)"
+                        }
+                    }
+                }
+                var failed: [String] = []
+                for await failure in group { if let failure { failed.append(failure) } }
+                return failed
+            }
+            if !failures.isEmpty { break }
+        }
+        if !failures.isEmpty {
+            guard ask(Confirmation(message: "Some jobs couldn't be cancelled", detail: failures.joined(separator: "\n"),
+                                   confirm: "\(verb) Anyway", decline: "Don't \(verb)")) else {
+                finishControl()
+                return .declined
+            }
+        }
+        let control = self.control
+        do {
+            try await Blocking.run { try control.stop(within: 20) }
+        } catch {
+            daemon = .notResponding("\(error)")
+            return .failed("\(error)")
+        }
+        status = nil
+        jobs = JobList()
+        countdownPanel?.hide()
+        return .stopped
+    }
+
+    /// Lets the heartbeat run again, unless the session is ending.
+    private func finishControl() {
+        if !sessionEnding { controlling = false }
+    }
+
+    /// Asks with the confirm closure. Declines without asking once the
+    /// session is ending.
+    private func ask(_ question: Confirmation) -> Bool {
+        guard !sessionEnding else { return false }
+        prompting = true
+        defer { prompting = false }
+        return confirm(question) && !sessionEnding
+    }
+
+    /// Closes an open Restart or Quit alert as declined.
+    private func closePrompt() {
+        if prompting, NSApp?.modalWindow != nil { NSApp.abortModal() }
+    }
+
+    static func runAlert(_ question: Confirmation) -> Bool {
+        // A menu bar app is never frontmost on its own; the alert must be.
+        NSApp.activate()
+        let alert = NSAlert()
+        alert.messageText = question.message
+        alert.informativeText = question.detail
+        alert.addButton(withTitle: question.confirm)
+        alert.addButton(withTitle: question.decline)
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+}
+
 // Sensing: Input Monitoring, the event tap and the physical input it reports.
 extension HostModel {
     private func setSensing(_ on: Bool) {
@@ -493,7 +602,15 @@ enum Notifier {
 
     /// Asks for Notifications only when there is one to show. After the first
     /// answer macOS returns it without prompting again.
+    /// UNUserNotificationCenter crashes outside an app bundle, as under
+    /// `swift run`.
+    static var available: Bool { Bundle.main.bundleIdentifier != nil }
+
     static func post(_ request: UNNotificationRequest) {
+        guard available else {
+            log.info("notification \(request.identifier, privacy: .public) not shown: not running from an app bundle")
+            return
+        }
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound]) { granted, error in
             guard granted else {
@@ -649,11 +766,13 @@ final class NotificationHandler: NSObject, UNUserNotificationCenterDelegate, @un
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let model = AppState.model
-        if model.controlling { return .terminateCancel }
         let reason = NSAppleEventManager.shared().currentAppleEvent?
             .attributeDescriptor(forKeyword: AEKeyword(kAEQuitReason))?.enumCodeValue
+        let systemQuit = QuitPrompt.systemQuit(reason: reason)
+        // A user quit waits for a restart in progress; logout never does.
+        if model.controlling && !systemQuit { return .terminateCancel }
         Task {
-            let quit = await model.shutDown(verb: "Quit", systemQuit: QuitPrompt.systemQuit(reason: reason))
+            let quit = await model.quit(systemQuit: systemQuit)
             sender.reply(toApplicationShouldTerminate: quit)
         }
         return .terminateLater
@@ -695,11 +814,26 @@ struct JobsMenu: View {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     init() {
-        let action = UNNotificationAction(identifier: "TAKE_BACK", title: "Take back now", options: [])
-        let category = UNNotificationCategory(identifier: "HOST_RETURN", actions: [action], intentIdentifiers: [])
-        UNUserNotificationCenter.current().setNotificationCategories([category])
-        UNUserNotificationCenter.current().delegate = NotificationHandler.shared
+        Self.exitIfAlreadyRunning()
+        if Notifier.available {
+            let action = UNNotificationAction(identifier: "TAKE_BACK", title: "Take back now", options: [])
+            let category = UNNotificationCategory(identifier: "HOST_RETURN", actions: [action], intentIdentifiers: [])
+            UNUserNotificationCenter.current().setNotificationCategories([category])
+            UNUserNotificationCenter.current().delegate = NotificationHandler.shared
+        }
         Task { @MainActor in AppState.model.start() }
+    }
+
+    /// Exits 0 if an older copy is running. Zero matters: the source-install
+    /// LaunchAgent restarts the app only after a failed exit.
+    private static func exitIfAlreadyRunning() {
+        guard let id = Bundle.main.bundleIdentifier else { return }
+        let current = NSRunningApplication.current
+        let me = SingleInstance.Instance(pid: current.processIdentifier, launched: current.launchDate)
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: id)
+            .filter { !$0.isTerminated }
+            .map { SingleInstance.Instance(pid: $0.processIdentifier, launched: $0.launchDate) }
+        if SingleInstance.yields(me, to: others) { exit(0) }
     }
 
     var body: some Scene {

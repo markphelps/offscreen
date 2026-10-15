@@ -56,7 +56,7 @@ The Offscreen app's LaunchAgent (`io.latentsignal.offscreen`) starts the app at 
 | Action | What happens |
 | --- | --- |
 | App launches (login or `open -a Offscreen`) | `launchctl kickstart` starts the daemon. Nothing happens if it is already running. |
-| Quit Offscreen | Lists active jobs. If there are any, asks "Quit and cancel N jobs?". On confirm, cancels each through `POST /jobs/{id}/cancel` (VM clone deleted, host guardian stopped), then sends `SIGTERM` and waits for the process to exit. Logout, restart and shutdown cancel without asking. |
+| Quit Offscreen | Lists active jobs. If there are any, asks "Quit and cancel N jobs?". On confirm, cancels each through `POST /jobs/{id}/cancel` (VM clone deleted, host guardian stopped), then sends `SIGTERM` and waits up to 20 seconds for the process to exit. If it doesn't exit, asks "Quit Anyway?" before leaving it running; Restart Daemon reports the error and doesn't start a new process. Logout, restart and shutdown skip the cancels: they send `SIGTERM`, wait at most 5 seconds, and never block the session end. In-flight jobs then fail at the next start (see below). |
 | Restart Daemon (menu) | Same confirm-and-cancel, then stops and kickstarts the daemon, which gets a new PID. |
 | Daemon crashes | Not relaunched. The menu says the daemon isn't responding; choose Restart Daemon. |
 

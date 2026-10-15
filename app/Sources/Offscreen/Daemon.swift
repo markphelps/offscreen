@@ -3,21 +3,27 @@ import Foundation
 enum DaemonControlError: Error, CustomStringConvertible {
     case launchctl(String)
     case notInstalled
-    case stillRunning
+    case stillRunning(seconds: Double)
 
     var description: String {
         switch self {
         case .launchctl(let message): message
         case .notInstalled: "The daemon isn't installed. Run offscreen daemon install, or reinstall Offscreen."
-        case .stillRunning: "The daemon didn't stop within 20 seconds."
+        case .stillRunning(let seconds): "The daemon didn't stop within \(seconds.formatted()) seconds."
         }
     }
+}
+
+/// Starts and stops the daemon; tests substitute their own.
+protocol DaemonLauncher: Sendable {
+    func start() throws
+    func stop(within seconds: Double) throws
 }
 
 /// Starts and stops offscreend through its LaunchAgent. The agent has no
 /// RunAtLoad or KeepAlive, so it runs only between the app's start and stop,
 /// under its own OffscreenDaemon.app identity (and Local Network grant).
-struct DaemonControl: Sendable {
+struct DaemonControl: DaemonLauncher {
     static let label = "io.latentsignal.offscreend"
     var target: String { "gui/\(getuid())/\(Self.label)" }
 
@@ -28,14 +34,15 @@ struct DaemonControl: Sendable {
 
     /// Asks the daemon to exit with SIGTERM, its normal shutdown, and waits
     /// until launchd reports no process.
-    func stop() throws {
+    func stop(within seconds: Double = 20) throws {
         guard try pid() != nil else { return }
         _ = try launchctl("kill", "SIGTERM", target)
-        for _ in 0..<200 {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
             if try pid() == nil { return }
             Thread.sleep(forTimeInterval: 0.1)
         }
-        throw DaemonControlError.stillRunning
+        throw DaemonControlError.stillRunning(seconds: seconds)
     }
 
     func pid() throws -> Int32? {
@@ -112,6 +119,34 @@ enum QuitPrompt {
     }
 
     /// macOS sets a quit reason on the quit event for logout, restart and
-    /// shutdown. Those quits cancel without asking, since the session is ending.
+    /// shutdown. Those quits don't ask or cancel jobs, since the session is
+    /// ending; they only send the daemon SIGTERM.
     static func systemQuit(reason: OSType?) -> Bool { reason != nil }
+}
+
+/// A question the app asks with an alert before quit or restart goes ahead.
+struct Confirmation: Equatable {
+    let message: String
+    let detail: String
+    let confirm: String
+    let decline: String
+}
+
+/// One copy of the app at a time: a copy that finds an older one exits.
+enum SingleInstance {
+    struct Instance: Equatable {
+        let pid: pid_t
+        let launched: Date?
+    }
+
+    /// Whether `me` should exit because another copy started first. Copies
+    /// started outside LaunchServices, as the source-install LaunchAgent
+    /// does, have no launch date; those compare by pid.
+    static func yields(_ me: Instance, to others: [Instance]) -> Bool {
+        others.contains { other in
+            guard other.pid != me.pid else { return false }
+            if let theirs = other.launched, let mine = me.launched, theirs != mine { return theirs < mine }
+            return other.pid < me.pid
+        }
+    }
 }

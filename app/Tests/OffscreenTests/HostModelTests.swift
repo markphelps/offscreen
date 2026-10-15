@@ -51,6 +51,36 @@ private final class FakeBridge: HostBridge, @unchecked Sendable {
     func cancel(_ id: String) throws { lock.withLock { log.append("cancel \(id)") } }
 }
 
+/// Starts and stops a pretend daemon. A gated stop blocks until the test
+/// signals it, then fails or succeeds as set.
+private final class FakeControl: DaemonLauncher, @unchecked Sendable {
+    private let lock = NSLock()
+    private var log: [String] = []
+    private var stopError: (any Error)?
+    private var stopGate: DispatchSemaphore?
+
+    var calls: [String] { lock.withLock { log } }
+
+    func failStop(_ error: any Error) { lock.withLock { stopError = error } }
+
+    func gateStop() -> DispatchSemaphore {
+        let gate = DispatchSemaphore(value: 0)
+        lock.withLock { stopGate = gate }
+        return gate
+    }
+
+    func start() throws { lock.withLock { log.append("start") } }
+
+    func stop(within seconds: Double) throws {
+        let (gate, error) = lock.withLock {
+            log.append("stop")
+            return (stopGate, stopError)
+        }
+        gate?.wait()
+        if let error { throw error }
+    }
+}
+
 private func hostStatus(running: String? = nil, paused: Bool = false) -> HostStatus {
     HostStatus(queued: 0, running: running.map { HostJob(id: $0, project: "p", task: "", state: "running") },
                waitingReason: "", countdownJob: nil, notNowJob: nil, countdownSeconds: nil,
@@ -59,8 +89,109 @@ private func hostStatus(running: String? = nil, paused: Bool = false) -> HostSta
 
 @MainActor
 final class HostModelTests: XCTestCase {
-    private func model(_ bridge: FakeBridge) -> HostModel {
-        HostModel(bridge: bridge, manualReturn: false, verifiedFilter: true, post: { _ in })
+    private func model(_ bridge: FakeBridge, control: FakeControl = FakeControl(),
+                       confirm: @escaping @MainActor (Confirmation) -> Bool = { _ in true },
+                       sessionStopLimit: Double = 5) -> HostModel {
+        HostModel(bridge: bridge, manualReturn: false, verifiedFilter: true, post: { _ in },
+                  control: control, confirm: confirm, sessionStopLimit: sessionStopLimit)
+    }
+
+    func testRestartReportsAFailedStopAndDoesNotStart() async {
+        let control = FakeControl()
+        control.failStop(DaemonControlError.stillRunning(seconds: 20))
+        let model = model(FakeBridge(), control: control)
+
+        await model.restart()?.value
+
+        XCTAssertEqual(control.calls, ["stop"], "a daemon that didn't stop must not be started")
+        XCTAssertEqual(model.actionError, "Restart failed: The daemon didn't stop within 20 seconds.")
+        XCTAssertEqual(model.daemon, .notResponding("The daemon didn't stop within 20 seconds."))
+        XCTAssertFalse(model.controlling, "the heartbeat resumes")
+    }
+
+    func testRestartStartsTheDaemonAfterAStop() async {
+        let control = FakeControl()
+        let model = model(FakeBridge(), control: control)
+        await model.restart()?.value
+        XCTAssertEqual(model.daemon, .restarting)
+        XCTAssertFalse(model.controlling)
+        XCTAssertNil(model.actionError)
+    }
+
+    func testQuitAsksBeforeLeavingADaemonThatDidNotStop() async {
+        let control = FakeControl()
+        control.failStop(DaemonControlError.stillRunning(seconds: 20))
+        var asked: [Confirmation] = []
+        let declining = model(FakeBridge(), control: control, confirm: { asked.append($0); return false })
+
+        let declined = await declining.quit(systemQuit: false)
+        XCTAssertFalse(declined)
+        XCTAssertEqual(asked.map(\.confirm), ["Quit Anyway"])
+        XCTAssertFalse(declining.controlling, "a declined quit keeps the app running normally")
+
+        let accepting = model(FakeBridge(), control: control, confirm: { _ in true })
+        let quit = await accepting.quit(systemQuit: false)
+        XCTAssertTrue(quit)
+    }
+
+    func testQuitAfterAStopDoesNotAsk() async {
+        var asked = 0
+        let model = model(FakeBridge(), confirm: { _ in asked += 1; return false })
+        let quit = await model.quit(systemQuit: false)
+        XCTAssertTrue(quit)
+        XCTAssertEqual(asked, 0, "no active jobs and a clean stop need no question")
+    }
+
+    func testSessionQuitSkipsCancelsAndIsBounded() async {
+        let bridge = FakeBridge()
+        bridge.setJobs([DaemonJob(id: "a", state: "running")])
+        let control = FakeControl()
+        let gate = control.gateStop() // the daemon never exits
+        var asked = 0
+        let model = model(bridge, control: control, confirm: { _ in asked += 1; return false },
+                          sessionStopLimit: 0.2)
+
+        let started = Date()
+        let quit = await model.quit(systemQuit: true)
+        gate.signal()
+
+        XCTAssertTrue(quit, "logout, restart and shutdown always proceed")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2)
+        XCTAssertEqual(asked, 0)
+        XCTAssertEqual(bridge.calls.filter { $0.hasPrefix("cancel") }, [], "session quits rely on SIGTERM")
+        XCTAssertEqual(control.calls, ["stop"])
+    }
+
+    func testSessionQuitDuringARestartIsNotBlockedAndPreventsTheStart() async {
+        let control = FakeControl()
+        let gate = control.gateStop()
+        let model = model(FakeBridge(), control: control, sessionStopLimit: 0.2)
+
+        let restart = model.restart()
+        while control.calls.isEmpty { await Task.yield() } // the restart's stop is in flight
+        XCTAssertTrue(model.controlling)
+
+        let quit = await model.quit(systemQuit: true)
+        XCTAssertTrue(quit, "a restart in progress must not block logout")
+        gate.signal()
+        await restart?.value
+
+        XCTAssertFalse(control.calls.contains("start"), "the session is ending; the daemon stays stopped")
+        XCTAssertTrue(model.controlling, "the heartbeat stays off until the app exits")
+    }
+
+    func testAlertsAreDeclinedOnceTheSessionIsEnding() async {
+        let bridge = FakeBridge()
+        bridge.setJobs([DaemonJob(id: "a", state: "running")])
+        var asked = 0
+        let model = model(bridge, confirm: { _ in asked += 1; return true }, sessionStopLimit: 0.2)
+        _ = await model.quit(systemQuit: true)
+
+        await model.restart()?.value
+        XCTAssertEqual(asked, 0)
+        let quit = await model.quit(systemQuit: false)
+        XCTAssertTrue(quit, "a user quit after logout began still lets the app exit")
+        XCTAssertEqual(asked, 0)
     }
 
     func testClosingTheMenuAcknowledgesFailuresPastTheRecentRows() async {
@@ -120,6 +251,8 @@ final class HostModelTests: XCTestCase {
         let model = model(bridge)
 
         let heartbeat = model.refresh()
+        // Blocking's queue is concurrent; let the heartbeat reach the daemon first.
+        while bridge.calls.isEmpty { await Task.yield() }
         await model.action("pause").value
         XCTAssertEqual(model.status?.paused, true)
         gate.signal() // the heartbeat's older status reply arrives last
