@@ -26,6 +26,12 @@ import SwiftUI
     // job submenu.
     private var openMenus = 0
     private var heldJobs: [DaemonJob]?
+    // A failed heartbeat holds the daemon line and host-lane rows the same
+    // way. The menu and icon keep the old status, but the model acts only on
+    // liveStatus, which is nil while the status is held. A successful reply
+    // drops the hold, so closing the menu can't overwrite it.
+    private var statusHeld = false
+    private var heldDaemon: DaemonState?
     // Failures unseen when the menu opened; closing it acknowledges them all,
     // including ones past the recent rows.
     private var acknowledgeable: Set<String> = []
@@ -35,6 +41,10 @@ import SwiftUI
     // after its status, so an action reply can land in between.
     private var statusRequests = 0
     private var appliedStatus = 0
+
+    /// The status the daemon last confirmed, which input and the countdown
+    /// panel act on. The menu shows status.
+    private var liveStatus: HostStatus? { statusHeld ? nil : status }
 
     var iconState: IconState {
         IconState.of(jobs: jobs.active, host: status, unseenFailures: !unseenFailures.isEmpty,
@@ -53,8 +63,8 @@ import SwiftUI
     private static let log = Logger(subsystem: "io.latentsignal.offscreen", category: "daemon")
     private var daemonVersion: DaemonVersion?
     // A daemon that is starting gets this long to answer before the menu
-    // says it isn't responding.
-    private var startDeadline = Date.distantFuture
+    // says it isn't responding. start() sets it before the first heartbeat.
+    private var startDeadline = Date.distantPast
     // Set while quit or restart cancels jobs and stops the daemon, so the
     // heartbeat doesn't report the stop as a failure.
     private(set) var controlling = false
@@ -124,7 +134,7 @@ import SwiftUI
     }
 
     private func startDaemon(_ state: DaemonState) {
-        daemon = state
+        setDaemon(state)
         daemonVersion = nil
         startDeadline = Date().addingTimeInterval(15)
         let control = self.control
@@ -135,7 +145,7 @@ import SwiftUI
                 // A restart's start can finish after logout began.
                 guard !sessionEnding else { return }
                 startDeadline = .distantPast
-                daemon = .notResponding("\(error)")
+                setDaemon(.notResponding("\(error)"))
             }
         }
     }
@@ -163,6 +173,7 @@ import SwiftUI
                 guard !controlling else { return }
                 if let version { daemonVersion = version }
                 if let current = daemonVersion {
+                    heldDaemon = nil
                     assign(\.daemon, DaemonState.reachable(daemon: current.version, app: appBuild))
                 }
                 apply(state, request: request)
@@ -181,14 +192,21 @@ import SwiftUI
                 // No daemon, no host job: stop sensing and release the App
                 // Nap activity until it answers again.
                 hostActive = false
-                assign(\.status, nil)
                 setJobs([])
                 countdownPanel?.hide()
                 daemonVersion = nil
-                if case .notResponding = daemon { return }
-                if Date() >= startDeadline { daemon = .notResponding("") }
+                if openMenus > 0 { statusHeld = true } else { assign(\.status, nil) }
+                if case .notResponding = heldDaemon ?? daemon { return }
+                guard Date() >= startDeadline else { return }
+                if openMenus > 0 { heldDaemon = .notResponding("") } else { daemon = .notResponding("") }
             }
         }
+    }
+
+    /// Sets the daemon state now, dropping one a failed heartbeat held.
+    private func setDaemon(_ state: DaemonState) {
+        heldDaemon = nil
+        daemon = state
     }
 
     private func nextStatusRequest() -> Int {
@@ -204,6 +222,7 @@ import SwiftUI
     }
 
     private func update(_ new: HostStatus) {
+        statusHeld = false
         assign(\.status, new)
         updateCountdownPanel(new)
         if let id = new.returnJob, id != previousNotice {
@@ -238,6 +257,14 @@ import SwiftUI
         if let list = heldJobs {
             heldJobs = nil
             showJobs(list)
+        }
+        if statusHeld {
+            statusHeld = false
+            assign(\.status, nil)
+        }
+        if let state = heldDaemon {
+            heldDaemon = nil
+            assign(\.daemon, state)
         }
     }
 
@@ -325,7 +352,7 @@ import SwiftUI
 
     func dismissActionError() {
         actionError = nil
-        if let status { updateCountdownPanel(status) }
+        if let liveStatus { updateCountdownPanel(liveStatus) }
     }
 
     /// Runs a host action. An automatic return is one the event tap sent
@@ -348,7 +375,7 @@ import SwiftUI
             } catch {
                 if name == "return", pendingReturn == job { pendingReturn = "" }
                 actionError = "\(name == "not-now" ? "Not now" : name == "take-back" ? "Take back" : "Host action") failed: \(error)"
-                if let status { updateCountdownPanel(status) }
+                if let liveStatus { updateCountdownPanel(liveStatus) }
             }
         }
     }
@@ -404,7 +431,7 @@ extension HostModel {
         sessionEnding = true
         controlling = true
         closePrompt()
-        daemon = .stopping
+        setDaemon(.stopping)
         countdownPanel?.hide()
         let control = self.control
         let limit = sessionStopLimit
@@ -446,7 +473,7 @@ extension HostModel {
                 return .declined
             }
         }
-        daemon = verb == "Quit" ? .stopping : .restarting
+        setDaemon(verb == "Quit" ? .stopping : .restarting)
         // Repeat in case a job was submitted while the first pass ran.
         var failures: [String] = []
         for _ in 0..<3 {
@@ -480,9 +507,10 @@ extension HostModel {
         do {
             try await Blocking.run { try control.stop(within: 20) }
         } catch {
-            daemon = .notResponding("\(error)")
+            setDaemon(.notResponding("\(error)"))
             return .failed("\(error)")
         }
+        statusHeld = false
         status = nil
         jobs = JobList()
         countdownPanel?.hide()
@@ -611,7 +639,7 @@ extension HostModel {
     private func observed(type: CGEventType, event: CGEvent) {
         // Report mouse-down immediately instead of waiting for the heartbeat:
         // the countdown must stop before the button's mouse-up.
-        if type == .leftMouseDown, status?.notNowJob != nil {
+        if type == .leftMouseDown, liveStatus?.notNowJob != nil {
             if refreshing { refreshAfterInput = true } else { refresh() }
         }
         let pid = event.getIntegerValueField(.eventSourceUnixProcessID)
@@ -626,9 +654,9 @@ extension HostModel {
     func physicalInput(pid: Int64) -> Task<Void, Never>? {
         // Candidate only: physical-vs-injected behavior requires the human probe.
         // Never consider injected events (which reset HIDIdleTime) a return.
-        let running: String? = ["preparing", "running", "collecting"].contains(status?.running?.state ?? "")
-            ? status?.running?.id : nil
-        let returning = status?.returnJob != nil || pendingReturn == running
+        let running: String? = ["preparing", "running", "collecting"].contains(liveStatus?.running?.state ?? "")
+            ? liveStatus?.running?.id : nil
+        let returning = liveStatus?.returnJob != nil || pendingReturn == running
         guard let id = InputFilter.candidatePhysical(pid: pid, runningJob: running,
                                                      alreadyReturning: returning,
                                                      manualReturn: manualReturn,

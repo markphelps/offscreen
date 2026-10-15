@@ -243,6 +243,51 @@ final class HostModelTests: XCTestCase {
         XCTAssertEqual(bridge.calls.filter { $0.hasPrefix("cancel") }, ["cancel a"])
     }
 
+    func testHeartbeatFailureHoldsStatusAndDaemonStateUntilTheMenuCloses() async {
+        let bridge = FakeBridge()
+        bridge.reply("/host/status", hostStatus())
+        bridge.reply("/host/resume", hostStatus(running: "job-1"))
+        let model = model(bridge)
+        await model.refresh()?.value
+        await model.action("resume").value
+        let shown = model.status
+        XCTAssertEqual(shown?.running?.id, "job-1")
+        XCTAssertEqual(model.daemon, .running(version: "test"))
+
+        model.menuOpened()
+        bridge.setDown(true)
+        await model.refresh()?.value
+        XCTAssertEqual(model.status, shown, "a failed heartbeat must not rebuild the open menu's host rows")
+        XCTAssertEqual(model.daemon, .running(version: "test"), "nor its daemon line")
+        XCTAssertEqual(model.iconState, .running, "the icon follows the menu")
+        XCTAssertNil(model.physicalInput(pid: 0), "input must not return a job the daemon no longer confirms")
+        XCTAssertFalse(bridge.calls.contains("/host/return/job-1"))
+
+        model.menuClosed()
+        XCTAssertNil(model.status)
+        XCTAssertEqual(model.daemon, .notResponding(""))
+        XCTAssertEqual(model.iconState, .idle)
+    }
+
+    func testASuccessfulHeartbeatWhileTheMenuIsOpenReplacesTheHeldFailure() async {
+        let bridge = FakeBridge()
+        bridge.reply("/host/status", hostStatus())
+        let model = model(bridge)
+        await model.refresh()?.value
+
+        model.menuOpened()
+        bridge.setDown(true)
+        await model.refresh()?.value
+        bridge.setDown(false)
+        bridge.reply("/host/status", hostStatus(paused: true))
+        await model.refresh()?.value
+        XCTAssertEqual(model.status?.paused, true, "successful replies still update the open menu")
+
+        model.menuClosed()
+        XCTAssertEqual(model.status?.paused, true, "the held failure must not clobber a later reply")
+        XCTAssertEqual(model.daemon, .running(version: "test"))
+    }
+
     func testAnOlderStatusReplyNeverOverwritesANewerOne() async {
         let bridge = FakeBridge()
         bridge.reply("/host/status", hostStatus(paused: false))
