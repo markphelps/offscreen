@@ -193,6 +193,14 @@ final class OffscreenTests: XCTestCase {
         XCTAssertNil(DaemonJob.date("not a time"))
     }
 
+    func testJobDateParsesPlainAndFractionalRFC3339() throws {
+        let plain = try XCTUnwrap(DaemonJob.date("2026-10-15T16:01:05Z"))
+        XCTAssertEqual(plain.timeIntervalSince1970, 1_792_080_065)
+        let fractional = try XCTUnwrap(DaemonJob.date("2026-10-15T12:01:05.25-04:00"))
+        XCTAssertEqual(fractional.timeIntervalSince(plain), 0.25, accuracy: 0.001)
+        XCTAssertNil(DaemonJob.date(nil))
+    }
+
     func testJobListSplitsActiveFromTheLastFiveFinished() {
         let base = Date(timeIntervalSince1970: 1_000_000)
         var jobs = (0..<7).map { index in

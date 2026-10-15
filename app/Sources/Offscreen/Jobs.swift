@@ -45,12 +45,18 @@ struct DaemonJob: Decodable, Sendable, Equatable {
         updated = Self.date(try values.decodeIfPresent(String.self, forKey: .updated))
     }
 
-    /// Go writes RFC 3339 with optional fractional seconds.
+    /// Go writes RFC 3339 with optional fractional seconds. ISO8601DateFormatter is thread-safe
+    /// but not Sendable, so one pair serves every decode instead of allocating per job on each refresh.
+    nonisolated(unsafe) private static let fractionalFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+    nonisolated(unsafe) private static let plainFormatter = ISO8601DateFormatter()
+
     static func date(_ text: String?) -> Date? {
         guard let text else { return nil }
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return fractional.date(from: text) ?? ISO8601DateFormatter().date(from: text)
+        return fractionalFormatter.date(from: text) ?? plainFormatter.date(from: text)
     }
 
     /// Queued or in flight: cancelling it stops a worker or a queued entry.
