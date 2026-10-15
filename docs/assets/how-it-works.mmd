@@ -1,0 +1,15 @@
+%% Source for how-it-works.svg and how-it-works-dark.svg. Rendered with tldraw and
+%% @tldraw/mermaid (draw font, size l), then exported as light and dark SVG.
+flowchart LR
+  A["offscreen run myapp ui"] --> Q["one queue<br/>(offscreend)"]
+  Q -->|"lane = vm"| V["VM lane<br/>fresh Tart VM<br/>per job"]
+  Q -->|"lane = host"| H["host lane<br/>your real desktop,<br/>only while you're away"]
+  H -.->|"you're back"| T["job stops,<br/>goes back in the queue"]
+  V --> R["logs, screenshots,<br/>.xcresult, exit code"]
+  H --> R
+  classDef vm stroke:#3D5AFE,fill:#E8EBFF
+  classDef host stroke:#F59E0B,fill:#FEF3C7
+  classDef out stroke:#16A34A,fill:#DCFCE7
+  class V vm
+  class H,T host
+  class R out

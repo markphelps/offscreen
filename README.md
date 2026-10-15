@@ -15,17 +15,10 @@ When a coding agent runs XCUITest, boots the iOS Simulator, or launches the app 
 > [!NOTE]
 > Offscreen is beta software. Commands, config and on-disk state may change between versions. Please [open an issue](https://github.com/markphelps/offscreen/issues) if something breaks.
 
-<!--
-  TODO demo GIF: replace this comment with
-  ![offscreen running a UI test in a VM while the desktop stays usable](docs/assets/demo.gif)
-
-  Shot list (about 15 seconds, looping, under 5 MB):
-  1. Split screen: terminal on the left, a text editor on the right with the cursor blinking.
-  2. Type `offscreen run hello test-ui` in examples/hello and press Enter.
-  3. While xcodebuild output streams, keep typing in the editor. Nothing steals focus.
-  4. Output ends with `job <id> artifacts <dir>`.
-  5. `open "$(offscreen artifacts <id>)"` shows Hello.xcresult (or run `launch` and show hello.png).
--->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.svg">
+  <img src="docs/assets/how-it-works.svg" alt="offscreen run myapp ui puts the job in one queue in offscreend. With lane = vm it runs in a fresh Tart VM per job; with lane = host it runs on your real desktop only while you're away, and if you come back the job stops and goes back in the queue. Both lanes return logs, screenshots, .xcresult bundles and the exit code." width="100%">
+</picture>
 
 ## Quick start
 
@@ -111,7 +104,7 @@ Run UI tests with `offscreen run myapp ui`. Never run `xcodebuild test` directly
 ## How it compares
 
 - **Running tests on your own desktop.** This works fine until a test or the Simulator opens a window while you're typing. Offscreen runs the same `xcodebuild` commands in a VM, so you keep working.
-- **Running Tart yourself.** [Tart]([url](https://github.com/openai/tart)) is the VM layer offscreen uses. Offscreen adds the parts you'd otherwise script by hand: a per-job clone of a golden image, copying the worktree and build products in, collecting artifacts, cleaning up afterwards, and a single queue for every caller, capped at Apple's limit of two macOS VMs.
+- **Running Tart yourself.** [Tart](https://github.com/cirruslabs/tart) is the VM layer offscreen uses. Offscreen adds the parts you'd otherwise script by hand: a per-job clone of a golden image, copying the worktree and build products in, collecting artifacts, cleaning up afterwards, and a single queue for every caller, capped at Apple's limit of two macOS VMs.
 - **Hosted macOS CI** (GitHub Actions, Cirrus, and others). CI runs after you push. Offscreen runs locally whenever you or your agent call it, before you commit. It doesn't replace CI.
 
 ## Commands
