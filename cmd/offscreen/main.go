@@ -29,6 +29,7 @@ type CLI struct {
 	LogLevel  string       `help:"Log level (debug, info, warn, error)." env:"OFFSCREEN_LOG_LEVEL" default:"info"`
 	Progress  string       `help:"Progress output for image build, image refresh and run phases: auto, tty, plain, quiet or json. Defaults to OFFSCREEN_PROGRESS, else auto." placeholder:"MODE"`
 	Run       RunCmd       `cmd:"" help:"Run a project task or command."`
+	Init      InitCmd      `cmd:"" help:"Write a starter .offscreen.toml in the current directory."`
 	Check     CheckCmd     `cmd:"" help:"Validate .offscreen.toml and list its tasks."`
 	Status    StatusCmd    `cmd:"" help:"List queued and active jobs; -a includes completed ones."`
 	Logs      LogsCmd      `cmd:"" help:"Print or follow job output."`
