@@ -62,8 +62,17 @@ enum BridgeError: Error {
     case rejected(Int, String)
 }
 
+/// The daemon calls HostModel makes, so tests can swap in a fake that
+/// controls reply order. Every call blocks; run it through `Blocking.run`.
+protocol HostBridge: Sendable {
+    func request(_ path: String, snapshot: Snapshot?) throws -> HostStatus
+    func version() throws -> DaemonVersion
+    func jobs() throws -> [DaemonJob]
+    func cancel(_ id: String) throws
+}
+
 // Owner-only Unix socket; no HTTP server listening on a network interface.
-struct Bridge: Sendable {
+struct Bridge: HostBridge {
     let socketPath: String
 
     static func defaultSocket() -> String {

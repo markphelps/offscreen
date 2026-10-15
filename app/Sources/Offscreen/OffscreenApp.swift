@@ -26,6 +26,15 @@ import SwiftUI
     // job submenu.
     private var openMenus = 0
     private var heldJobs: [DaemonJob]?
+    // Failures unseen when the menu opened; closing it acknowledges them all,
+    // including ones past the recent rows.
+    private var acknowledgeable: Set<String> = []
+    // Cancels that finished while the menu was open.
+    private var cancelsDone: Set<String> = []
+    // Host status replies apply in request order: a heartbeat fetches jobs
+    // after its status, so an action reply can land in between.
+    private var statusRequests = 0
+    private var appliedStatus = 0
 
     var iconState: IconState {
         IconState.of(jobs: jobs.active, host: status, unseenFailures: !unseenFailures.isEmpty,
@@ -43,7 +52,8 @@ import SwiftUI
     private(set) var controlling = false
     private let appBuild = Bundle.main.object(forInfoDictionaryKey: "OffscreenBuild") as? String
     private var countdownPanel: CountdownPanel?
-    private let bridge = Bridge(socketPath: Bridge.defaultSocket())
+    private let bridge: any HostBridge
+    private let post: @MainActor (UNNotificationRequest) -> Void
     private var timer: Timer?
     private var eventTap: CFMachPort?
     private var tapSource: CFRunLoopSource?
@@ -56,17 +66,26 @@ import SwiftUI
     private var refreshAfterInput = false
     private var pendingReturn = ""
     private let probe = CommandLine.arguments.contains("--probe-input")
-    private let manualReturn = UserDefaults.standard.bool(forKey: "ManualReturn")
-    private let verifiedFilter = UserDefaults.standard.bool(forKey: "VerifiedInputFilter")
+    private let manualReturn: Bool
+    private let verifiedFilter: Bool
+
+    init(bridge: any HostBridge = Bridge(socketPath: Bridge.defaultSocket()),
+         manualReturn: Bool = UserDefaults.standard.bool(forKey: "ManualReturn"),
+         verifiedFilter: Bool = UserDefaults.standard.bool(forKey: "VerifiedInputFilter"),
+         post: @escaping @MainActor (UNNotificationRequest) -> Void = Notifier.post) {
+        self.bridge = bridge
+        self.manualReturn = manualReturn
+        self.verifiedFilter = verifiedFilter
+        self.post = post
+    }
 
     func start() {
         guard timer == nil else { return }
         let center = NotificationCenter.default
         menuObservers.append(center.addObserver(forName: NSMenu.didBeginTrackingNotification,
                                                 object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.openMenus += 1 }
+            MainActor.assumeIsolated { self?.menuOpened() }
         })
-        // Closing the menu acknowledges the failures it listed.
         menuObservers.append(center.addObserver(forName: NSMenu.didEndTrackingNotification,
                                                 object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.menuClosed() }
@@ -173,20 +192,22 @@ import SwiftUI
         return alert.runModal() == .alertFirstButtonReturn
     }
 
-    private func refresh() {
-        guard !refreshing, !controlling else { return }
+    @discardableResult
+    func refresh() -> Task<Void, Never>? {
+        guard !refreshing, !controlling else { return nil }
         refreshing = true
+        let request = nextStatusRequest()
         let needVersion = daemonVersion == nil
         let sense = HostSensing.needed(hostActive: hostActive, probe: probe)
         setSensing(sense)
         let tapReady = eventTap.map { CFMachPortIsValid($0) && CGEvent.tapIsEnabled(tap: $0) } ?? false
         let bridge = self.bridge
-        Task {
+        return Task {
             do {
                 let (state, jobs, version) = try await Blocking.run { () throws -> (HostStatus, [DaemonJob], DaemonVersion?) in
                     let state = sense
                         ? try bridge.request("/host/snapshot", snapshot: Sensors.snapshot(eventTapReady: tapReady))
-                        : try bridge.request("/host/status")
+                        : try bridge.request("/host/status", snapshot: nil)
                     return (state, try bridge.jobs(), needVersion ? try bridge.version() : nil)
                 }
                 refreshing = false
@@ -196,8 +217,8 @@ import SwiftUI
                 if let current = daemonVersion {
                     assign(\.daemon, DaemonState.reachable(daemon: current.version, app: appBuild))
                 }
-                hostActive = HostSensing.hostActive(state)
-                update(state)
+                apply(state, request: request)
+                hostActive = HostSensing.hostActive(status ?? state)
                 updateJobs(jobs)
                 // Send the first snapshot now rather than on the next
                 // heartbeat so admission isn't delayed by the switch.
@@ -210,13 +231,25 @@ import SwiftUI
                 refreshAfterInput = false
                 guard !controlling else { return }
                 assign(\.status, nil)
-                assign(\.jobs, JobList())
+                setJobs([])
                 countdownPanel?.hide()
                 daemonVersion = nil
                 if case .notResponding = daemon { return }
                 if Date() >= startDeadline { daemon = .notResponding("") }
             }
         }
+    }
+
+    private func nextStatusRequest() -> Int {
+        statusRequests += 1
+        return statusRequests
+    }
+
+    /// Applies a status reply unless a later request's reply already applied.
+    private func apply(_ new: HostStatus, request: Int) {
+        guard request > appliedStatus else { return }
+        appliedStatus = request
+        update(new)
     }
 
     private func update(_ new: HostStatus) {
@@ -230,18 +263,27 @@ import SwiftUI
             notification.body = "\(name) continues for \(new.graceSeconds ?? 0)s. Take back now to stop and requeue it."
             notification.categoryIdentifier = "HOST_RETURN"
             let request = UNNotificationRequest(identifier: "return-\(id)", content: notification, trigger: nil)
-            Notifier.post(request)
+            post(request)
         }
         if new.returnJob == nil { previousNotice = "" }
         if pendingReturn != new.running?.id || new.returnJob != nil { pendingReturn = "" }
     }
 
-    private func menuClosed() {
+    func menuOpened() {
+        if openMenus == 0 { acknowledgeable = unseenFailures }
+        openMenus += 1
+    }
+
+    /// Closing the menu acknowledges the failures known when it opened, even
+    /// ones past the recent rows; ones that arrived while it was open keep
+    /// the icon's attention state.
+    func menuClosed() {
         openMenus = max(0, openMenus - 1)
         guard openMenus == 0 else { return }
-        // Only the failures the menu listed count as seen; ones that arrived
-        // while it was open keep the icon's attention state.
-        unseenFailures.subtract((jobs.active + jobs.recent).map(\.id))
+        assign(\.unseenFailures, unseenFailures.subtracting(acknowledgeable))
+        acknowledgeable = []
+        assign(\.cancelling, cancelling.subtracting(cancelsDone))
+        cancelsDone = []
         if let list = heldJobs {
             heldJobs = nil
             showJobs(list)
@@ -253,8 +295,12 @@ import SwiftUI
         assign(\.jobs, JobList(list))
     }
 
-    private func updateJobs(_ list: [DaemonJob]) {
+    private func setJobs(_ list: [DaemonJob]) {
         if openMenus > 0 { heldJobs = list } else { showJobs(list) }
+    }
+
+    private func updateJobs(_ list: [DaemonJob]) {
+        setJobs(list)
         let ids = Set(list.map(\.id))
         assign(\.unseenFailures, unseenFailures.intersection(ids))
         assign(\.cancelling, cancelling.intersection(ids))
@@ -271,19 +317,22 @@ import SwiftUI
         notification.body = job.reason.isEmpty ? "Click to reveal its artifacts." : job.reason
         notification.userInfo = ["artifacts": job.artifacts]
         let request = UNNotificationRequest(identifier: "failed-\(job.id)", content: notification, trigger: nil)
-        Notifier.post(request)
+        post(request)
     }
 
     /// Cancels through the daemon's normal path; the call returns once the
     /// job stopped and its clone is gone, so it runs off the main actor.
-    func cancel(_ job: DaemonJob) {
-        guard !cancelling.contains(job.id) else { return }
+    @discardableResult
+    func cancel(_ job: DaemonJob) -> Task<Void, Never>? {
+        guard !cancelling.contains(job.id) else { return nil }
         cancelling.insert(job.id)
         let bridge = self.bridge
-        Task {
+        return Task {
             do {
                 try await Blocking.run { try bridge.cancel(job.id) }
-                cancelling.remove(job.id)
+                // The row says "Cancelling…" until the menu closes rather
+                // than rebuilding the open menu.
+                if openMenus > 0 { cancelsDone.insert(job.id) } else { cancelling.remove(job.id) }
             } catch {
                 cancelling.remove(job.id)
                 actionError = "Cancel \(job.name) failed: \(error)"
@@ -328,13 +377,23 @@ import SwiftUI
         if let status { updateCountdownPanel(status) }
     }
 
-    func action(_ name: String, job: String = "") {
+    /// Runs a host action. An automatic return is one the event tap sent
+    /// rather than the "I'm back" button.
+    @discardableResult
+    func action(_ name: String, job: String = "", automatic: Bool = false) -> Task<Void, Never> {
         let bridge = self.bridge
-        Task {
+        let request = nextStatusRequest()
+        return Task {
             do {
-                let state = try await Blocking.run { try bridge.request("/host/\(name)" + (job.isEmpty ? "" : "/\(job)")) }
+                let state = try await Blocking.run {
+                    try bridge.request("/host/\(name)" + (job.isEmpty ? "" : "/\(job)"), snapshot: nil)
+                }
                 actionError = nil
-                update(state)
+                apply(state, request: request)
+            } catch BridgeError.rejected(409, _) where automatic {
+                // The job finished before the return reached the daemon.
+                // pendingReturn stays set, so input doesn't resend until the
+                // status no longer shows the job running.
             } catch {
                 if name == "return", pendingReturn == job { pendingReturn = "" }
                 actionError = "\(name == "not-now" ? "Not now" : name == "take-back" ? "Take back" : "Host action") failed: \(error)"
@@ -342,7 +401,10 @@ import SwiftUI
             }
         }
     }
+}
 
+// Sensing: Input Monitoring, the event tap and the physical input it reports.
+extension HostModel {
     private func setSensing(_ on: Bool) {
         guard on else {
             if sensing { removeTap() }
@@ -396,6 +458,13 @@ import SwiftUI
         let pid = event.getIntegerValueField(.eventSourceUnixProcessID)
         let state = event.getIntegerValueField(.eventSourceStateID)
         if probe { print("type=\(type.rawValue) pid=\(pid) sourceState=\(state)"); fflush(stdout) }
+        physicalInput(pid: pid)
+    }
+
+    /// Starts the grace period when input that looks physical arrives while a
+    /// host job runs.
+    @discardableResult
+    func physicalInput(pid: Int64) -> Task<Void, Never>? {
         // Candidate only: physical-vs-injected behavior requires the human probe.
         // Never consider injected events (which reset HIDIdleTime) a return.
         let running: String? = ["preparing", "running", "collecting"].contains(status?.running?.state ?? "")
@@ -404,9 +473,9 @@ import SwiftUI
         guard let id = InputFilter.candidatePhysical(pid: pid, runningJob: running,
                                                      alreadyReturning: returning,
                                                      manualReturn: manualReturn,
-                                                     verified: verifiedFilter) else { return }
+                                                     verified: verifiedFilter) else { return nil }
         pendingReturn = id
-        action("return", job: id)
+        return action("return", job: id, automatic: true)
     }
 }
 
