@@ -102,7 +102,7 @@ Run UI tests with `offscreen run myapp ui`. Never run `xcodebuild test` directly
 ## How it compares
 
 - **Running tests on your own desktop.** This works fine until a test or the Simulator opens a window while you're typing. Offscreen runs the same `xcodebuild` commands in a VM, so you keep working.
-- **Running Tart yourself.** Tart is the VM layer offscreen uses. Offscreen adds the parts you'd otherwise script by hand: a per-job clone of a golden image, copying the worktree and build products in, collecting artifacts, cleaning up afterwards, and a single queue for every caller, capped at Apple's limit of two macOS VMs.
+- **Running Tart yourself.** [Tart]([url](https://github.com/openai/tart)) is the VM layer offscreen uses. Offscreen adds the parts you'd otherwise script by hand: a per-job clone of a golden image, copying the worktree and build products in, collecting artifacts, cleaning up afterwards, and a single queue for every caller, capped at Apple's limit of two macOS VMs.
 - **Hosted macOS CI** (GitHub Actions, Cirrus, and others). CI runs after you push. Offscreen runs locally whenever you or your agent call it, before you commit. It doesn't replace CI.
 
 ## Commands
