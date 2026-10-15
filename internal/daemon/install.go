@@ -54,6 +54,9 @@ func infoPlist() []byte {
 </dict></plist>`)
 }
 
+// agentPlist has no RunAtLoad or KeepAlive: the daemon starts only when the
+// Offscreen app (or install) kickstarts it, and stays stopped when the app
+// quits it.
 func agentPlist(dir, bundle string, env map[string]string) []byte {
 	var variables strings.Builder
 	for _, key := range []string{"PATH", "OFFSCREEN_CONFIG", "OFFSCREEN_STATE_DIR"} {
@@ -61,7 +64,7 @@ func agentPlist(dir, bundle string, env map[string]string) []byte {
 			variables.WriteString("<key>" + key + "</key><string>" + xmlString(value) + "</string>")
 		}
 	}
-	return []byte(`<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>` + Label + `</string><key>ProgramArguments</key><array><string>` + xmlString(filepath.Join(bundle, "Contents", "MacOS", "offscreend")) + `</string></array><key>AssociatedBundleIdentifiers</key><array><string>` + Label + `</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>EnvironmentVariables</key><dict>` + variables.String() + `</dict><key>StandardErrorPath</key><string>` + xmlString(filepath.Join(dir, "daemon.log")) + `</string></dict></plist>`)
+	return []byte(`<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>` + Label + `</string><key>ProgramArguments</key><array><string>` + xmlString(filepath.Join(bundle, "Contents", "MacOS", "offscreend")) + `</string></array><key>AssociatedBundleIdentifiers</key><array><string>` + Label + `</string></array><key>EnvironmentVariables</key><dict>` + variables.String() + `</dict><key>StandardErrorPath</key><string>` + xmlString(filepath.Join(dir, "daemon.log")) + `</string></dict></plist>`)
 }
 
 // plistValue reads only top-level string values in a plist dict, not nested values.
@@ -271,6 +274,15 @@ func stageBundle(stage, source string, run commandRunner) error {
 	return nil
 }
 
+// startAgent loads a LaunchAgent and runs it now. The agent has no RunAtLoad,
+// so bootstrap alone leaves it stopped.
+func startAgent(run commandRunner, domain, path, label string) error {
+	if err := runCommand(run, "launchctl", "bootstrap", domain, path); err != nil {
+		return err
+	}
+	return runCommand(run, "launchctl", "kickstart", domain+"/"+label)
+}
+
 func writePlist(path string, contents []byte) error {
 	temp, err := os.CreateTemp(filepath.Dir(path), ".offscreend-plist-*")
 	if err != nil {
@@ -411,12 +423,12 @@ func installWithWait(dir, path, source, domain string, env map[string]string, ru
 	// restartStopped bootstraps the previous services this install stopped.
 	restartStopped := func(cause error) error {
 		if stoppedOld {
-			if err := runCommand(run, "launchctl", "bootstrap", domain, path); err != nil {
+			if err := startAgent(run, domain, path, Label); err != nil {
 				cause = errors.Join(cause, fmt.Errorf("restart previous daemon: %w", err))
 			}
 		}
 		if stoppedLegacy {
-			if err := runCommand(run, "launchctl", "bootstrap", domain, legacyPath); err != nil {
+			if err := startAgent(run, domain, legacyPath, legacyLabel); err != nil {
 				cause = errors.Join(cause, fmt.Errorf("restart legacy daemon: %w", err))
 			}
 		}
@@ -527,7 +539,7 @@ func installWithWait(dir, path, source, domain string, env map[string]string, ru
 	if err := writePlist(path, agentPlist(dir, bundle, env)); err != nil {
 		return rollback(fmt.Errorf("write daemon LaunchAgent: %w", err))
 	}
-	if err := runCommand(run, "launchctl", "bootstrap", domain, path); err != nil {
+	if err := startAgent(run, domain, path, Label); err != nil {
 		return rollback(fmt.Errorf("start daemon LaunchAgent: %w", err))
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), wait)

@@ -30,6 +30,21 @@ struct HostStatus: Decodable, Sendable {
     }
 }
 
+/// A job as `GET /jobs` reports it; only the fields the app uses.
+struct DaemonJob: Decodable, Sendable {
+    let id: String
+    let state: String
+
+    /// Queued or in flight: cancelling it stops a worker or a queued entry.
+    var active: Bool { !["done", "failed", "cancelled"].contains(state) }
+}
+
+/// The `GET /version` response. A daemon without the route is protocol 0.
+struct DaemonVersion: Decodable, Sendable {
+    let `protocol`: Int
+    let version: String
+}
+
 struct Snapshot: Encodable, Sendable {
     let idleSeconds: Double
     let unlocked: Bool
@@ -67,6 +82,30 @@ struct Bridge: Sendable {
     }
 
     func request(_ path: String, snapshot: Snapshot? = nil) throws -> HostStatus {
+        let body = try snapshot.map { try JSONEncoder().encode($0) } ?? Data()
+        let payload = try send(path == "/host/status" ? "GET" : "POST", path, body: body)
+        return try JSONDecoder().decode(HostStatus.self, from: payload)
+    }
+
+    func version() throws -> DaemonVersion {
+        do {
+            return try JSONDecoder().decode(DaemonVersion.self, from: send("GET", "/version"))
+        } catch BridgeError.rejected(404, _) {
+            return DaemonVersion(protocol: 0, version: "")
+        }
+    }
+
+    func jobs() throws -> [DaemonJob] {
+        try JSONDecoder().decode([DaemonJob].self, from: send("GET", "/jobs"))
+    }
+
+    /// Returns once the daemon has stopped the job and deleted its clone. The
+    /// daemon bounds that at 130 seconds.
+    func cancel(_ id: String) throws {
+        _ = try send("POST", "/jobs/\(id)/cancel", timeout: 140)
+    }
+
+    private func send(_ method: String, _ path: String, body: Data = Data(), timeout: Int = 3) throws -> Data {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw BridgeError.socket("socket: \(errno)") }
         defer { _ = close(fd) }
@@ -89,10 +128,8 @@ struct Bridge: Sendable {
             }
         }
         guard result == 0 else { throw BridgeError.socket("connect: \(errno)") }
-        var timeout = timeval(tv_sec: 3, tv_usec: 0)
-        _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-        let body = try snapshot.map { try JSONEncoder().encode($0) } ?? Data()
-        let method = path == "/host/status" ? "GET" : "POST"
+        var receive = timeval(tv_sec: timeout, tv_usec: 0)
+        _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &receive, socklen_t(MemoryLayout<timeval>.size))
         let header = "\(method) \(path) HTTP/1.0\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
         let bytes = Array(header.utf8) + body
         var sent = 0
@@ -118,6 +155,6 @@ struct Bridge: Sendable {
         }
         let payload = response[separator.upperBound...]
         guard code == 200 else { throw BridgeError.rejected(code, String(decoding: payload, as: UTF8.self)) }
-        return try JSONDecoder().decode(HostStatus.self, from: payload)
+        return Data(payload)
     }
 }

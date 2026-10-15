@@ -4,6 +4,9 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 bindir=$(cd "$root" && swift build --show-bin-path)
 app="$root/.build/Offscreen.app"
 label=io.latentsignal.offscreen
+# The menu compares this with the daemon's build (diagnostics only, as in
+# scripts/install.sh) to say when the daemon needs a restart.
+build=$(git -C "$root" describe --tags --always --dirty 2>/dev/null || echo dev)
 mkdir -p "$app/Contents/MacOS"
 cp "$bindir/Offscreen" "$app/Contents/MacOS/Offscreen"
 cat > "$app/Contents/Info.plist" <<PLIST
@@ -19,6 +22,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <key>CFBundleShortVersionString</key><string>1.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHumanReadableCopyright</key><string>Offscreen</string>
+<key>OffscreenBuild</key><string>$build</string>
 </dict></plist>
 PLIST
 codesign --force --sign - --identifier "$label" \

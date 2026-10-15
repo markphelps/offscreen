@@ -73,15 +73,20 @@ func TestInstallPublishesBundleAndLaunchAgent(t *testing.T) {
 	require.Contains(t, string(plist), "<key>AssociatedBundleIdentifiers</key><array><string>"+Label+"</string></array>")
 	require.Contains(t, string(plist), "<key>PATH</key><string>/opt/tart:&amp;&lt;path&gt;</string>")
 	require.Contains(t, string(plist), "<key>OFFSCREEN_CONFIG</key><string>some&amp;&lt;config&gt;</string>")
+	// The Offscreen app starts and stops the daemon, so launchd must neither
+	// start it at login nor relaunch it after the app stops it.
+	require.NotContains(t, string(plist), "RunAtLoad")
+	require.NotContains(t, string(plist), "KeepAlive")
 	var parsed any
 	require.NoError(t, xml.Unmarshal(plist, &parsed))
-	require.Len(t, commands, 5)
+	require.Len(t, commands, 6)
 	require.Contains(t, commands[0], "/usr/bin/codesign --force --sign - --identifier "+Label)
 	require.Contains(t, commands[0], `=designated => identifier "`+Label+`"`)
 	require.Contains(t, commands[1], "/usr/bin/codesign --verify --strict")
 	require.Contains(t, commands[2], lsregister+" -f ")
 	require.Contains(t, commands[3], lsregister+" -f "+bundle)
 	require.Equal(t, "launchctl bootstrap gui/501 "+path, commands[4])
+	require.Equal(t, "launchctl kickstart gui/501/"+Label, commands[5], "install starts the on-demand agent")
 }
 
 func mustPlistValue(t *testing.T, data []byte, key string) string {
@@ -161,7 +166,7 @@ func TestInstallRegistrationFailureAfterPublishRestoresPreviousFiles(t *testing.
 func TestInstallReinstallAndBootstrapRollback(t *testing.T) {
 	dir, path, source := installerFixture(t)
 	old := oldInstallation(t, dir, path)
-	calls := 0
+	calls, kickstarts := 0, 0
 	loaded := true
 	run := func(name string, args ...string) ([]byte, error) {
 		if name == "launchctl" {
@@ -172,6 +177,8 @@ func TestInstallReinstallAndBootstrapRollback(t *testing.T) {
 				}
 			case "bootout":
 				loaded = false
+			case "kickstart":
+				kickstarts++
 			case "bootstrap":
 				calls++
 				if calls == 1 {
@@ -185,6 +192,7 @@ func TestInstallReinstallAndBootstrapRollback(t *testing.T) {
 	err := install(dir, path, source, "gui/501", map[string]string{"PATH": "/usr/bin"}, run, readyImmediately)
 	require.ErrorContains(t, err, "new daemon rejected")
 	require.Equal(t, 2, calls, "rollback must restart the previous service")
+	require.Equal(t, 1, kickstarts, "rollback runs the previous on-demand service")
 	actual, readErr := os.ReadFile(path)
 	require.NoError(t, readErr)
 	require.Equal(t, old, actual)

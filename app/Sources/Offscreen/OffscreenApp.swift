@@ -7,8 +7,18 @@ import UserNotifications
 @MainActor
 @Observable final class HostModel {
     var status: HostStatus?
-    var connectionError: String?
     var actionError: String?
+    // The app owns the daemon: it starts it at launch and stops it at quit.
+    var daemon: DaemonState = .starting
+    private let control = DaemonControl()
+    private var daemonVersion: DaemonVersion?
+    // A daemon that is starting gets this long to answer before the menu
+    // says it isn't responding.
+    private var startDeadline = Date.distantFuture
+    // Set while quit or restart cancels jobs and stops the daemon, so the
+    // heartbeat doesn't report the stop as a failure.
+    private(set) var controlling = false
+    private let appBuild = Bundle.main.object(forInfoDictionaryKey: "OffscreenBuild") as? String
     private var countdownPanel: CountdownPanel?
     private let bridge = Bridge(socketPath: Bridge.defaultSocket())
     private var timer: Timer?
@@ -28,6 +38,7 @@ import UserNotifications
 
     func start() {
         guard timer == nil else { return }
+        startDaemon(.starting)
         let heartbeat = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
@@ -36,11 +47,101 @@ import UserNotifications
         refresh()
     }
 
-    func retry() { refresh() }
+    private func startDaemon(_ state: DaemonState) {
+        daemon = state
+        daemonVersion = nil
+        startDeadline = Date().addingTimeInterval(15)
+        let control = self.control
+        Task.detached {
+            do {
+                try control.start()
+            } catch {
+                await MainActor.run {
+                    self.startDeadline = .distantPast
+                    self.daemon = .notResponding("\(error)")
+                }
+            }
+        }
+    }
+
+    /// Restart Daemon: the same confirm-and-cancel as quit, then a new process.
+    func restart() {
+        guard !controlling else { return }
+        Task {
+            guard await shutDown(verb: "Restart", systemQuit: false) else { return }
+            startDaemon(.restarting)
+            controlling = false
+        }
+    }
+
+    /// Cancels active jobs through the daemon's cancel path, so VM clones are
+    /// deleted and host guardians stop, then stops the daemon. Asks first
+    /// unless the session is ending. Returns false if the user declined.
+    func shutDown(verb: String, systemQuit: Bool) async -> Bool {
+        controlling = true
+        let bridge = self.bridge
+        let active = await Task.detached { (try? bridge.jobs())?.filter(\.active) ?? [] }.value
+        if !active.isEmpty && !systemQuit {
+            let detail = "\(verb == "Quit" ? "Quitting Offscreen" : "Restarting") stops the daemon. Cancelled jobs stop and their VM clones are deleted."
+            guard ask(QuitPrompt.message(verb: verb, count: active.count), detail: detail,
+                      confirm: "\(verb) and Cancel Jobs", decline: "Don't \(verb)") else {
+                controlling = false
+                return false
+            }
+        }
+        daemon = verb == "Quit" ? .stopping : .restarting
+        // Repeat in case a job was submitted while the first pass ran.
+        let failures = await Task.detached { () -> [String] in
+            var failures: [String] = []
+            for _ in 0..<3 {
+                let jobs = (try? bridge.jobs())?.filter(\.active) ?? []
+                if jobs.isEmpty { break }
+                failures = await withTaskGroup(of: String?.self) { group in
+                    for job in jobs {
+                        group.addTask {
+                            do { try bridge.cancel(job.id); return nil } catch { return "\(job.id): \(error)" }
+                        }
+                    }
+                    var failed: [String] = []
+                    for await failure in group { if let failure { failed.append(failure) } }
+                    return failed
+                }
+                if !failures.isEmpty { break }
+            }
+            return failures
+        }.value
+        if !failures.isEmpty && !systemQuit {
+            guard ask("Some jobs couldn't be cancelled", detail: failures.joined(separator: "\n"),
+                      confirm: "\(verb) Anyway", decline: "Don't \(verb)") else {
+                controlling = false
+                return false
+            }
+        }
+        let control = self.control
+        let stopError = await Task.detached { () -> String? in
+            do { try control.stop(); return nil } catch { return "\(error)" }
+        }.value
+        if let stopError { daemon = .notResponding(stopError) }
+        status = nil
+        countdownPanel?.hide()
+        return true
+    }
+
+    private func ask(_ message: String, detail: String, confirm: String, decline: String) -> Bool {
+        // A menu bar app is never frontmost on its own; the alert must be.
+        NSApp.activate()
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.informativeText = detail
+        alert.addButton(withTitle: confirm)
+        alert.addButton(withTitle: decline)
+        return alert.runModal() == .alertFirstButtonReturn
+    }
 
     private func refresh() {
-        guard !refreshing else { return }
+        guard !refreshing, !controlling else { return }
         refreshing = true
+        let needVersion = daemonVersion == nil
         let sense = HostSensing.needed(hostActive: hostActive, probe: probe)
         setSensing(sense)
         let tapReady = eventTap.map { CFMachPortIsValid($0) && CGEvent.tapIsEnabled(tap: $0) } ?? false
@@ -50,8 +151,15 @@ import UserNotifications
                 let state = sense
                     ? try bridge.request("/host/snapshot", snapshot: Sensors.snapshot(eventTapReady: tapReady))
                     : try bridge.request("/host/status")
+                let version = needVersion ? try bridge.version() : nil
                 await MainActor.run {
                     self.refreshing = false
+                    // A reply that raced a quit or restart is stale.
+                    guard !self.controlling else { return }
+                    if let version { self.daemonVersion = version }
+                    if let current = self.daemonVersion {
+                        self.daemon = DaemonState.reachable(daemon: current.version, app: self.appBuild)
+                    }
                     self.hostActive = HostSensing.hostActive(state)
                     self.update(state)
                     // Send the first snapshot now rather than on the next
@@ -64,10 +172,13 @@ import UserNotifications
             } catch {
                 await MainActor.run {
                     self.refreshing = false
+                    self.refreshAfterInput = false
+                    guard !self.controlling else { return }
                     self.status = nil
                     self.countdownPanel?.hide()
-                    self.connectionError = "Daemon unavailable. Start it with offscreen daemon install."
-                    self.refreshAfterInput = false
+                    self.daemonVersion = nil
+                    if case .notResponding = self.daemon { return }
+                    if Date() >= self.startDeadline { self.daemon = .notResponding("") }
                 }
             }
         }
@@ -75,7 +186,6 @@ import UserNotifications
 
     private func update(_ new: HostStatus) {
         status = new
-        connectionError = nil
         updateCountdownPanel(new)
         if let id = new.returnJob, id != previousNotice {
             previousNotice = id
@@ -340,7 +450,23 @@ final class NotificationHandler: NSObject, UNUserNotificationCenterDelegate, @un
 
 @MainActor enum AppState { static let model = HostModel() }
 
+@MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let model = AppState.model
+        if model.controlling { return .terminateCancel }
+        let reason = NSAppleEventManager.shared().currentAppleEvent?
+            .attributeDescriptor(forKeyword: AEKeyword(kAEQuitReason))?.enumCodeValue
+        Task {
+            let quit = await model.shutDown(verb: "Quit", systemQuit: QuitPrompt.systemQuit(reason: reason))
+            sender.reply(toApplicationShouldTerminate: quit)
+        }
+        return .terminateLater
+    }
+}
+
 @main struct OffscreenApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+
     init() {
         let action = UNNotificationAction(identifier: "TAKE_BACK", title: "Take back now", options: [])
         let category = UNNotificationCategory(identifier: "HOST_RETURN", actions: [action], intentIdentifiers: [])
@@ -352,6 +478,9 @@ final class NotificationHandler: NSObject, UNUserNotificationCenterDelegate, @un
     var body: some Scene {
         MenuBarExtra {
             let model = AppState.model
+            Text(model.daemon.summary)
+            if case .notResponding(let detail) = model.daemon, !detail.isEmpty { Text(detail) }
+            Divider()
             if let current = model.status {
                 if let job = current.running {
                     Text("Running: \(job.project) · \(job.task.isEmpty ? job.id : job.task)")
@@ -380,9 +509,6 @@ final class NotificationHandler: NSObject, UNUserNotificationCenterDelegate, @un
                 } else {
                     Button("Pause host jobs") { model.action("pause") }
                 }
-            } else {
-                Text(model.connectionError ?? "Checking host lane…")
-                Button("Retry") { model.retry() }
             }
             if let error = model.actionError {
                 Divider()
@@ -392,6 +518,8 @@ final class NotificationHandler: NSObject, UNUserNotificationCenterDelegate, @un
                 Button("Dismiss error") { model.dismissActionError() }
             }
             Divider()
+            Button("Restart Daemon") { model.restart() }
+                .disabled(model.daemon.busy || model.controlling)
             Button("Quit Offscreen") { NSApplication.shared.terminate(nil) }
         } label: {
             Image(nsImage: MenuBarIcon.image(running: AppState.model.status?.running != nil))

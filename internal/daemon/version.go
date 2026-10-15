@@ -56,7 +56,7 @@ type IncompatibleError struct {
 }
 
 func (e IncompatibleError) Error() string {
-	return fmt.Sprintf("offscreend speaks protocol %d, but this offscreen needs protocol %d or later\nrestart the daemon with this build: offscreen daemon install", e.Daemon, e.Min)
+	return fmt.Sprintf("offscreend speaks protocol %d, but this offscreen needs protocol %d or later\nrestart the daemon with this build: choose Restart Daemon in the Offscreen menu, or quit and reopen Offscreen", e.Daemon, e.Min)
 }
 
 func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {

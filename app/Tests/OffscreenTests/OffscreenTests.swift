@@ -141,4 +141,32 @@ final class OffscreenTests: XCTestCase {
         XCTAssertEqual(status.queued, 2)
         XCTAssertEqual(status.graceSeconds, 60)
     }
+
+    func testDaemonPIDComesFromTheServiceLineOnly() {
+        let running = "gui/501/io.latentsignal.offscreend = {\n\tstate = running\n\tpid = 4242\n\tendpoints = {\n\t\tpid = 7\n\t}\n}\n"
+        XCTAssertEqual(DaemonControl.pid(fromPrint: running), 4242)
+        let stopped = "gui/501/io.latentsignal.offscreend = {\n\tstate = not running\n\tlast exit code = 0\n}\n"
+        XCTAssertNil(DaemonControl.pid(fromPrint: stopped))
+    }
+
+    func testDaemonStateFlagsMismatchOnlyBetweenStampedBuilds() {
+        XCTAssertEqual(DaemonState.reachable(daemon: "v1-2-gabc", app: "v1-2-gabc"), .running(version: "v1-2-gabc"))
+        XCTAssertEqual(DaemonState.reachable(daemon: "v1-1-gold", app: "v1-2-gabc"),
+                       .mismatch(daemon: "v1-1-gold", app: "v1-2-gabc"))
+        XCTAssertEqual(DaemonState.reachable(daemon: "dev", app: "v1-2-gabc"), .running(version: "dev"))
+        XCTAssertEqual(DaemonState.reachable(daemon: "v1", app: nil), .running(version: "v1"))
+        XCTAssertEqual(DaemonState.reachable(daemon: "", app: "v1"), .running(version: "protocol 0"))
+        XCTAssertTrue(DaemonState.restarting.busy)
+        XCTAssertFalse(DaemonState.notResponding("").busy)
+    }
+
+    func testOnlyQueuedAndInFlightJobsAreCancelledAtQuit() throws {
+        let json = Data(#"[{"id":"a","state":"queued"},{"id":"b","state":"running"},{"id":"c","state":"booting"},{"id":"d","state":"done"},{"id":"e","state":"failed"},{"id":"f","state":"cancelled"}]"#.utf8)
+        let jobs = try JSONDecoder().decode([DaemonJob].self, from: json)
+        XCTAssertEqual(jobs.filter(\.active).map(\.id), ["a", "b", "c"])
+        XCTAssertEqual(QuitPrompt.message(verb: "Quit", count: 1), "Quit and cancel 1 job?")
+        XCTAssertEqual(QuitPrompt.message(verb: "Quit", count: 2), "Quit and cancel 2 jobs?")
+        XCTAssertTrue(QuitPrompt.systemQuit(reason: OSType(kAELogOut)))
+        XCTAssertFalse(QuitPrompt.systemQuit(reason: nil))
+    }
 }

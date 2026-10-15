@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markphelps/offscreen/internal/daemon"
+	"github.com/markphelps/offscreen/internal/exitcode"
 )
 
 func versionOutput(t *testing.T) string {
@@ -54,7 +55,7 @@ func TestStatusWarnsOnceAboutOlderCompatibleDaemon(t *testing.T) {
 	require.Equal(t, "fake\n", stdout)
 	require.Equal(t, 1, strings.Count(stderr, "\n"), "one warning line: %q", stderr)
 	require.True(t, strings.HasPrefix(stderr, "warning: "))
-	require.Contains(t, stderr, "offscreen daemon install")
+	require.Contains(t, stderr, "Restart Daemon in the Offscreen menu")
 }
 
 func TestStatusDoesNotWarnAboutCurrentDaemon(t *testing.T) {
@@ -62,4 +63,17 @@ func TestStatusDoesNotWarnAboutCurrentDaemon(t *testing.T) {
 	stdout, stderr := runStatus(t)
 	require.Equal(t, "fake\n", stdout)
 	require.Empty(t, stderr)
+}
+
+func TestCommandsNeedingDaemonTellUserToOpenOffscreen(t *testing.T) {
+	state, err := os.MkdirTemp("/tmp", "os-none-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(state) })
+	t.Setenv("OFFSCREEN_STATE_DIR", state)
+	for _, args := range [][]string{{"status"}, {"cancel", "0123456789abcdef"}} {
+		var stderr bytes.Buffer
+		code := report(execute(args), &stderr)
+		require.Equal(t, exitcode.RunnerFailure, code, args)
+		require.Equal(t, "Offscreen isn't running. Open it with: open -a Offscreen\n", stderr.String(), args)
+	}
 }

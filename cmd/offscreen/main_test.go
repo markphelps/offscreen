@@ -108,7 +108,7 @@ func TestCommandsAreAvailable(t *testing.T) {
 		ctx, err := parser.Parse(args)
 		require.NoError(t, err, "%v", args)
 		if args[0] == "pause" || args[0] == "resume" {
-			require.ErrorContains(t, ctx.Run(), "offscreend is not running")
+			require.ErrorIs(t, ctx.Run(), daemon.ErrUnavailable)
 		}
 	}
 }

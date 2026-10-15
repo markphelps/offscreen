@@ -74,7 +74,7 @@ When the CLI and daemon differ:
 - If the daemon is older but still usable, `status` and `run` print one line on stderr, `warning: offscreend speaks protocol N, older than this offscreen's M; ...`. Features the daemon lacks stay off; against a protocol 0 daemon, `run` shows no phases. Stdout is unchanged.
 - If the daemon is too old for this client, every command that talks to it fails with `offscreend speaks protocol N, but this offscreen needs protocol M or later` and a hint line, and exits 70.
 
-Either way, run `offscreen daemon install` to restart the daemon with this build. See [versions and upgrades](../DAEMON.md#versions-and-upgrades).
+Either way, restart the daemon with this build: choose Restart Daemon in the Offscreen menu, or quit and reopen Offscreen. When the daemon isn't running at all, commands that need it exit 70 with `Offscreen isn't running. Open it with: open -a Offscreen`. See [versions and upgrades](../DAEMON.md#versions-and-upgrades).
 
 ## Prune
 

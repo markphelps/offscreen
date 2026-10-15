@@ -16,7 +16,9 @@ import (
 	"time"
 )
 
-var ErrUnavailable = errors.New("offscreend is not running; run offscreen daemon install")
+// ErrUnavailable means nothing answers on the daemon socket. The Offscreen
+// menu bar app starts and stops the daemon, so the fix is to open the app.
+var ErrUnavailable = errors.New("Offscreen isn't running. Open it with: open -a Offscreen") //nolint:staticcheck // user-facing sentence
 
 // Client talks to offscreend over its Unix socket. Copies share one cached
 // version probe.

@@ -50,5 +50,5 @@ func warnOldDaemon(ctx context.Context, client daemon.Client, w io.Writer) {
 	if err != nil || info.Protocol >= daemon.ProtocolVersion || info.Protocol < daemon.MinDaemonProtocol {
 		return
 	}
-	_, _ = fmt.Fprintf(w, "warning: offscreend speaks protocol %d, older than this offscreen's %d; restart it with this build to enable everything: offscreen daemon install\n", info.Protocol, daemon.ProtocolVersion)
+	_, _ = fmt.Fprintf(w, "warning: offscreend speaks protocol %d, older than this offscreen's %d; restart it with this build to enable everything: choose Restart Daemon in the Offscreen menu\n", info.Protocol, daemon.ProtocolVersion)
 }

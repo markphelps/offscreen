@@ -328,19 +328,28 @@ func main() {
 		return
 	}
 	if err := execute(os.Args[1:]); err != nil {
-		if status, ok := errors.AsType[runExit](err); ok {
-			os.Exit(int(status))
-		}
-		_, _ = fmt.Fprintln(os.Stderr, err)
-		if errors.Is(err, daemon.ErrUnavailable) {
-			os.Exit(exitcode.RunnerFailure)
-		}
-		if _, ok := errors.AsType[daemon.IncompatibleError](err); ok {
-			os.Exit(exitcode.RunnerFailure)
-		}
-		if _, ok := errors.AsType[runFailure](err); ok {
-			os.Exit(exitcode.RunnerFailure)
-		}
-		os.Exit(1)
+		os.Exit(report(err, os.Stderr))
 	}
+}
+
+// report prints a failed command's error on w and returns its exit status.
+func report(err error, w io.Writer) int {
+	if status, ok := errors.AsType[runExit](err); ok {
+		return int(status)
+	}
+	if errors.Is(err, daemon.ErrUnavailable) {
+		// The dial error behind it (usually a missing socket) is noise for
+		// the user; keep it for debugging.
+		slog.Debug("daemon unreachable", "err", err)
+		_, _ = fmt.Fprintln(w, daemon.ErrUnavailable)
+		return exitcode.RunnerFailure
+	}
+	_, _ = fmt.Fprintln(w, err)
+	if _, ok := errors.AsType[daemon.IncompatibleError](err); ok {
+		return exitcode.RunnerFailure
+	}
+	if _, ok := errors.AsType[runFailure](err); ok {
+		return exitcode.RunnerFailure
+	}
+	return 1
 }

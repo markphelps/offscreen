@@ -35,7 +35,7 @@ Offscreen queues GUI and UI-test jobs from agents and scripts, then runs them in
 
 ## Gotchas
 
-- Rebuilding the CLI doesn't restart the running daemon. Only `offscreen daemon install` (or `mise run install:go`) does.
+- Rebuilding the CLI doesn't restart the running daemon. `offscreen daemon install` (or `mise run install`) and Restart Daemon in the Offscreen menu do. The app starts the daemon at launch and stops it at quit; its LaunchAgent has no `RunAtLoad`/`KeepAlive`.
 - The guardian restores `GOCOVERDIR` after the task exits so coverage warnings stay out of task output (`internal/run/process.go`). CI guards this with `go test ./internal/run -cover -count=1`.
 - GitHub-hosted runners can't run Tart VMs. Run end-to-end checks locally with `examples/hello`. Isolate local runs with `OFFSCREEN_STATE_DIR` and `OFFSCREEN_CONFIG`.
 - Example Xcode builds set `COMPILER_INDEX_STORE_ENABLE=NO` because VirtioFS doesn't support index-store atomic renames.

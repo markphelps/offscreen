@@ -115,7 +115,8 @@ func TestClientRefusesDaemonBelowMinimumProtocol(t *testing.T) {
 	require.Equal(t, IncompatibleError{Daemon: 0, Min: 1}, incompatible)
 	lines := strings.Split(err.Error(), "\n")
 	require.Len(t, lines, 2, "one error line plus a hint")
-	require.Contains(t, lines[1], "offscreen daemon install")
+	require.Contains(t, lines[1], "Offscreen")
+	require.NotContains(t, lines[1], "daemon install")
 	require.Zero(t, d.jobs.Load(), "no request reaches a too-old daemon")
 }
 

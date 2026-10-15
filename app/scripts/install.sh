@@ -50,6 +50,8 @@ if [[ -d "$app" ]]; then rm -rf "$app"; fi
 /usr/bin/ditto "$root/.build/Offscreen.app" "$app"
 codesign --verify --strict "$app"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app"
+# The app starts at login and launchd restarts it after a crash, but not after
+# Quit Offscreen, which exits 0 once it has stopped the daemon.
 # Escape the only interpolated XML string. A default install uses the user's
 # ordinary state directory; isolated integration tests can export a short path.
 escape_xml() {
@@ -70,7 +72,8 @@ cat > "$plist" <<PLIST
 <plist version="1.0"><dict>
 <key>Label</key><string>$label</string>
 <key>ProgramArguments</key><array><string>$(escape_xml "$app/Contents/MacOS/Offscreen")</string></array>
-<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
+<key>RunAtLoad</key><true/>
+<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
 $state_env
 </dict></plist>
 PLIST

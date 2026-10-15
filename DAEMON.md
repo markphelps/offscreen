@@ -1,6 +1,6 @@
 # Daemon operation
 
-`offscreend` owns the job queue, both lanes, job history and cleanup. The CLI and the menu bar helper talk to it over an owner-only Unix socket. See [ARCHITECTURE.md](ARCHITECTURE.md) for how the pieces fit together.
+`offscreend` owns the job queue, both lanes, job history and cleanup. The CLI and the Offscreen menu bar app talk to it over an owner-only Unix socket. The app owns its lifecycle: opening Offscreen starts the daemon, quitting Offscreen stops it. See [ARCHITECTURE.md](ARCHITECTURE.md) for how the pieces fit together.
 
 ## Files
 
@@ -11,7 +11,7 @@
 | Daemon app | `~/Library/Application Support/offscreen/OffscreenDaemon.app` | Bundle ID `io.latentsignal.offscreend`, `LSUIElement`. |
 | Job output | `~/Library/Caches/offscreen/jobs/<id>/` | `stream.bin` (stdout/stderr) and artifacts. |
 | Daemon log | `~/Library/Application Support/offscreen/daemon.log` | The daemon's stderr (`--log-level` / `OFFSCREEN_LOG_LEVEL`). |
-| LaunchAgent | `~/Library/LaunchAgents/io.latentsignal.offscreend.plist` | `RunAtLoad` + `KeepAlive`. Not moved by `OFFSCREEN_STATE_DIR`. |
+| LaunchAgent | `~/Library/LaunchAgents/io.latentsignal.offscreend.plist` | No `RunAtLoad` or `KeepAlive`: loaded at login but started only by the app. Not moved by `OFFSCREEN_STATE_DIR`. |
 | Guardian markers | `host-group-*.json` in the state directory | Present only while a host job runs, or after a guardian crash. |
 
 `OFFSCREEN_STATE_DIR` moves everything except the LaunchAgent. Keep it short, because Unix socket paths have a length limit. `OFFSCREEN_CONFIG` selects the user config.
@@ -24,7 +24,7 @@ flowchart LR
     b --> c["stage app: ad-hoc sign,<br/>verify, register with<br/>Launch Services"]
     c --> d["stop old service"]
     d --> e["publish app +<br/>LaunchAgent plist"]
-    e --> f["bootstrap, wait<br/>until it answers"]
+    e --> f["bootstrap + kickstart,<br/>wait until it answers"]
     c -. fails .-> keep["old service untouched"]
     e -. fails .-> rollback["restore old app,<br/>plist, service"]
     f -. fails .-> rollback
@@ -33,7 +33,8 @@ flowchart LR
 - The LaunchAgent carries `OFFSCREEN_CONFIG`, `OFFSCREEN_STATE_DIR` (if set) and the installer's `PATH`, so launchd can find Tart.
 - **Reinstall after rebuilding `offscreend`.**
 - `offscreen daemon uninstall` stops the service and removes only its LaunchAgent plist. The bundle stays.
-- `offscreen run` does not start a daemon on its own. Without the service it exits 70 and tells you to install it.
+- Install starts the daemon once so it can check that it answers. After that, the Offscreen app starts and stops it.
+- The CLI never starts the daemon. When nothing answers on the socket, commands that need it exit 70 with `Offscreen isn't running. Open it with: open -a Offscreen`. `offscreen version` still prints `daemon: not running`.
 - Build an image (`offscreen image build`) before submitting jobs.
 
 ### Local Network permission
@@ -45,9 +46,22 @@ VM jobs reach the guest over SSH, which needs the daemon's Local Network permiss
 | Guest SSH times out with "no route to host" | Local Network setting for Offscreen Daemon, then the Tart network. The error alone does not prove a denial. |
 | Permission lost after rebuilding | Expected with ad-hoc signing. Grant it again. Only an Apple-issued signing identity keeps it across rebuilds. |
 
-The helper's Input Monitoring and Notifications grants do not substitute for this permission.
+The app's Input Monitoring and Notifications grants do not substitute for this permission.
 
 ## Startup and restart
+
+The Offscreen app's LaunchAgent (`io.latentsignal.offscreen`) starts the app at login, and launchd restarts it only after a crash. The app drives the daemon's LaunchAgent with `launchctl`:
+
+| Action | What happens |
+| --- | --- |
+| App launches (login or `open -a Offscreen`) | `launchctl kickstart` starts the daemon. Nothing happens if it is already running. |
+| Quit Offscreen | Lists active jobs. If there are any, asks "Quit and cancel N jobs?". On confirm, cancels each through `POST /jobs/{id}/cancel` (VM clone deleted, host guardian stopped), then sends `SIGTERM` and waits for the process to exit. Logout, restart and shutdown cancel without asking. |
+| Restart Daemon (menu) | Same confirm-and-cancel, then stops and kickstarts the daemon, which gets a new PID. |
+| Daemon crashes | Not relaunched. The menu says the daemon isn't responding; choose Restart Daemon. |
+
+The menu shows the daemon's state: running with its build, not responding, or a build that differs from the app's (usually a rebuilt `offscreend` that hasn't been restarted).
+
+Running `offscreend` directly, with its own `OFFSCREEN_STATE_DIR`, still works for tests and selftests; it uses no LaunchAgent.
 
 ```mermaid
 flowchart TD
@@ -77,19 +91,19 @@ A `job-*` clone counts as owned only if it matches a recorded job, or its 16-hex
 
 ## Versions and upgrades
 
-`offscreen` and `offscreend` are separate binaries and upgrade separately. Rebuilding or reinstalling the CLI does not restart the running daemon; only `offscreen daemon install` (which `mise run install:go` runs) does. So a new client can talk to an older daemon, and an older client to a new one.
+`offscreen` and `offscreend` are separate binaries and upgrade separately. Rebuilding or reinstalling the CLI does not restart the running daemon. `offscreen daemon install` (which `mise run install` runs), Restart Daemon in the Offscreen menu, or quitting and reopening Offscreen does. So a new client can talk to an older daemon, and an older client to a new one.
 
 The socket API has an integer protocol version, `daemon.ProtocolVersion`. It goes up whenever the API gains or changes behavior. A daemon from before version negotiation is protocol 0. `GET /version` returns the daemon's protocol, its build version, and the opt-in features it supports, such as `phases`. A protocol 0 daemon answers 404, which the client reads as protocol 0 with no features. The build version (set at build time; `dev` for a plain `go build`) is for diagnostics only. Compatibility is decided by the protocol number and features, never by the build string.
 
 The compatibility rules:
 
-- **The daemon keeps serving older clients.** New behavior is opt-in per request, as `?phases=1` is on the job stream, so a client that does not ask gets the old behavior. The menu bar helper sends no protocol and keeps working.
+- **The daemon keeps serving older clients.** New behavior is opt-in per request, as `?phases=1` is on the job stream, so a client that does not ask gets the old behavior. The menu bar app sends no protocol and keeps working.
 - **The client checks the daemon once per command.** It asks `GET /version`, caches the answer, and uses a feature only when the daemon advertises it. Against a protocol 0 daemon, `run` shows no phases and passes the job's stderr through untouched.
-- **Every client request carries `X-Offscreen-Protocol`.** The daemon logs requests whose protocol differs from its own at debug level (`OFFSCREEN_LOG_LEVEL=debug`); requests without the header (older clients and the helper) are served as before.
-- **A daemon too old to use is refused by the client.** If the daemon's protocol is below the client's minimum, every command that talks to it fails with one line plus a hint to run `offscreen daemon install`, and exits 70. The current minimum is 0, so every daemon is usable.
+- **Every client request carries `X-Offscreen-Protocol`.** The daemon logs requests whose protocol differs from its own at debug level (`OFFSCREEN_LOG_LEVEL=debug`); requests without the header (older clients and the menu bar app) are served as before.
+- **A daemon too old to use is refused by the client.** If the daemon's protocol is below the client's minimum, every command that talks to it fails with one line plus a hint to restart the daemon from the Offscreen menu, and exits 70. The current minimum is 0, so every daemon is usable.
 - **An older but usable daemon gets a warning.** `status` and `run` print one `warning:` line on stderr suggesting a restart. Stdout is unchanged.
 
-Run `offscreen version` to see both sides. After upgrading, run `offscreen daemon install` (or `mise run install:go`) to restart the daemon with the new build. The daemon logs its build version and protocol when it starts.
+Run `offscreen version` to see both sides. After upgrading, run `mise run install`, which restarts the daemon with the new build. To restart without reinstalling, choose Restart Daemon in the Offscreen menu. The daemon logs its build version and protocol when it starts.
 
 ## Caller environment
 
