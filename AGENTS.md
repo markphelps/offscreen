@@ -16,7 +16,7 @@ Offscreen queues GUI and UI-test jobs from agents and scripts, then runs them in
 - `cmd/offscreend` + `internal/daemon`: daemon with SQLite state, the scheduler, and an HTTP/JSON API on an owner-only Unix socket.
 - `internal/run`: VM and host execution, the host guardian, artifacts. `internal/tart` and `internal/guest` wrap the Tart CLI and SSH.
 - `internal/image`: golden image build and prune. Runs in the CLI, not the daemon.
-- `app/`: Swift menu bar app, Offscreen.app (separate SwiftPM package). Not shipped by GoReleaser.
+- `app/`: Swift menu bar app, Offscreen.app (separate SwiftPM package). GoReleaser's before hook bundles it with `app/scripts/bundle.sh {{ .Version }}` and puts it in the release archive.
 - `skills/offscreen/SKILL.md`: user-facing agent skill. Update it when CLI behavior or exit codes change.
 - `examples/hello`: end-to-end Tart/XCUITest example.
 

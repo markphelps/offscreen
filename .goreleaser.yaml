@@ -2,6 +2,12 @@
 version: 2
 project_name: offscreen
 
+before:
+  hooks:
+    # Builds app/.build/Offscreen.app (Swift 6.2+) stamped with the version the
+    # Go binaries get, so the menu can tell when the daemon is stale.
+    - app/scripts/bundle.sh {{ .Version }}
+
 builds:
   - id: offscreen
     main: ./cmd/offscreen
@@ -30,6 +36,8 @@ archives:
     files:
       - LICENSE
       - README.md
+      - src: app/.build/Offscreen.app
+        dst: Offscreen.app
 
 checksum:
   name_template: checksums.txt
