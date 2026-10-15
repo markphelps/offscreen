@@ -238,11 +238,13 @@ func TestPeriodicExpiryRetriesFailuresAndHonorsProtection(t *testing.T) {
 	s.mu.Unlock()
 
 	// While Tart cannot be listed, nothing VM-backed is deleted and the error is logged.
+	// Break Tart before allowing the delete, so no pass can delete the job in between.
+	require.NoError(t, os.WriteFile(filepath.Join(vms, "list-fails"), nil, 0o600))
 	_, err = s.db.Exec(`DROP TRIGGER deny_delete`)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(vms, "list-fails"), nil, 0o600))
+	seen := len(logs.String())
 	require.Eventually(t, func() bool {
-		return strings.Contains(logs.String(), "msg=\"job expiry deleted nothing; retrying next pass\" pass=periodic")
+		return strings.Contains(logs.String()[seen:], "msg=\"job expiry deleted nothing; retrying next pass\" pass=periodic")
 	}, 5*time.Second, 10*time.Millisecond)
 	require.True(t, rowExists(t, s, stuck.ID))
 	require.Equal(t, stuckUpdated, storedUpdated(t, s, stuck.ID))
