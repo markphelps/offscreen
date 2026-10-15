@@ -30,15 +30,6 @@ struct HostStatus: Decodable, Sendable {
     }
 }
 
-/// A job as `GET /jobs` reports it; only the fields the app uses.
-struct DaemonJob: Decodable, Sendable {
-    let id: String
-    let state: String
-
-    /// Queued or in flight: cancelling it stops a worker or a queued entry.
-    var active: Bool { !["done", "failed", "cancelled"].contains(state) }
-}
-
 /// The `GET /version` response. A daemon without the route is protocol 0.
 struct DaemonVersion: Decodable, Sendable {
     let `protocol`: Int
@@ -96,7 +87,8 @@ struct Bridge: Sendable {
     }
 
     func jobs() throws -> [DaemonJob] {
-        try JSONDecoder().decode([DaemonJob].self, from: send("GET", "/jobs"))
+        // The list grows with retained history, so it gets a larger cap.
+        try JSONDecoder().decode([DaemonJob].self, from: send("GET", "/jobs", limit: 8 << 20))
     }
 
     /// Returns once the daemon has stopped the job and deleted its clone. The
@@ -105,7 +97,8 @@ struct Bridge: Sendable {
         _ = try send("POST", "/jobs/\(id)/cancel", timeout: 140)
     }
 
-    private func send(_ method: String, _ path: String, body: Data = Data(), timeout: Int = 3) throws -> Data {
+    private func send(_ method: String, _ path: String, body: Data = Data(), timeout: Int = 3,
+                      limit: Int = 65536) throws -> Data {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw BridgeError.socket("socket: \(errno)") }
         defer { _ = close(fd) }
@@ -145,7 +138,7 @@ struct Bridge: Sendable {
         while true {
             let count = Darwin.read(fd, &buffer, buffer.count)
             if count == 0 { break }
-            guard count > 0, response.count < 65536 else { throw BridgeError.invalidResponse }
+            guard count > 0, response.count < limit else { throw BridgeError.invalidResponse }
             response.append(contentsOf: buffer.prefix(count))
         }
         guard let separator = response.range(of: Data("\r\n\r\n".utf8)),

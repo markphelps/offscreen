@@ -1,13 +1,28 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import os
 import SwiftUI
-import UserNotifications
+@preconcurrency import UserNotifications
 
 @MainActor
 @Observable final class HostModel {
     var status: HostStatus?
     var actionError: String?
+    // Every job, VM and host, from GET /jobs on the same heartbeat.
+    var jobs = JobList()
+    var now = Date()
+    var cancelling: Set<String> = []
+    // Failures not yet shown in a menu the user opened and closed; they hold
+    // the icon in its attention state.
+    private(set) var unseenFailures: Set<String> = []
+    private var failures = FailureTracker()
+    private var menuObserver: NSObjectProtocol?
+
+    var iconState: IconState {
+        IconState.of(jobs: jobs.active, host: status, unseenFailures: !unseenFailures.isEmpty,
+                     actionError: actionError != nil)
+    }
     // The app owns the daemon: it starts it at launch and stops it at quit.
     var daemon: DaemonState = .starting
     private let control = DaemonControl()
@@ -38,6 +53,11 @@ import UserNotifications
 
     func start() {
         guard timer == nil else { return }
+        // Closing the menu acknowledges the failures it listed.
+        menuObserver = NotificationCenter.default.addObserver(forName: NSMenu.didEndTrackingNotification,
+                                                              object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.unseenFailures = [] }
+        }
         startDaemon(.starting)
         let heartbeat = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
@@ -123,6 +143,7 @@ import UserNotifications
         }.value
         if let stopError { daemon = .notResponding(stopError) }
         status = nil
+        jobs = JobList()
         countdownPanel?.hide()
         return true
     }
@@ -151,6 +172,7 @@ import UserNotifications
                 let state = sense
                     ? try bridge.request("/host/snapshot", snapshot: Sensors.snapshot(eventTapReady: tapReady))
                     : try bridge.request("/host/status")
+                let jobs = try bridge.jobs()
                 let version = needVersion ? try bridge.version() : nil
                 await MainActor.run {
                     self.refreshing = false
@@ -162,6 +184,7 @@ import UserNotifications
                     }
                     self.hostActive = HostSensing.hostActive(state)
                     self.update(state)
+                    self.updateJobs(jobs)
                     // Send the first snapshot now rather than on the next
                     // heartbeat so admission isn't delayed by the switch.
                     if self.refreshAfterInput || HostSensing.needed(hostActive: self.hostActive, probe: self.probe) != sense {
@@ -175,6 +198,7 @@ import UserNotifications
                     self.refreshAfterInput = false
                     guard !self.controlling else { return }
                     self.status = nil
+                    self.jobs = JobList()
                     self.countdownPanel?.hide()
                     self.daemonVersion = nil
                     if case .notResponding = self.daemon { return }
@@ -195,14 +219,64 @@ import UserNotifications
             notification.body = "\(name) continues for \(new.graceSeconds ?? 0)s. Take back now to stop and requeue it."
             notification.categoryIdentifier = "HOST_RETURN"
             let request = UNNotificationRequest(identifier: "return-\(id)", content: notification, trigger: nil)
-            // Ask for Notifications only when there is one to show. After the
-            // first answer macOS returns it without prompting again.
-            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
-                if granted { UNUserNotificationCenter.current().add(request) }
-            }
+            Notifier.post(request)
         }
         if new.returnJob == nil { previousNotice = "" }
         if pendingReturn != new.running?.id || new.returnJob != nil { pendingReturn = "" }
+    }
+
+    private func updateJobs(_ list: [DaemonJob]) {
+        now = Date()
+        jobs = JobList(list)
+        let ids = Set(list.map(\.id))
+        unseenFailures.formIntersection(ids)
+        cancelling.formIntersection(ids)
+        for job in failures.newFailures(in: list) {
+            unseenFailures.insert(job.id)
+            notifyFailure(job)
+        }
+    }
+
+    private func notifyFailure(_ job: DaemonJob) {
+        let notification = UNMutableNotificationContent()
+        notification.title = "Job failed: \(job.name)"
+        notification.subtitle = "\(job.lane) lane · \(job.result)"
+        notification.body = job.reason.isEmpty ? "Click to reveal its artifacts." : job.reason
+        notification.userInfo = ["artifacts": job.artifacts]
+        let request = UNNotificationRequest(identifier: "failed-\(job.id)", content: notification, trigger: nil)
+        Notifier.post(request)
+    }
+
+    /// Cancels through the daemon's normal path; the call returns once the
+    /// job stopped and its clone is gone, so it runs off the main actor.
+    func cancel(_ job: DaemonJob) {
+        guard !cancelling.contains(job.id) else { return }
+        cancelling.insert(job.id)
+        let bridge = self.bridge
+        Task.detached {
+            do {
+                try bridge.cancel(job.id)
+                await MainActor.run { _ = self.cancelling.remove(job.id) }
+            } catch {
+                await MainActor.run {
+                    self.cancelling.remove(job.id)
+                    self.actionError = "Cancel \(job.name) failed: \(error)"
+                }
+            }
+        }
+    }
+
+    func revealArtifacts(_ path: String) {
+        guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else {
+            actionError = "Artifacts not found: \(path.isEmpty ? "no directory" : path)"
+            return
+        }
+        NSWorkspace.shared.open(URL(fileURLWithPath: path, isDirectory: true))
+    }
+
+    func copyID(_ id: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(id, forType: .string)
     }
 
     private func updateCountdownPanel(_ current: HostStatus) {
@@ -312,6 +386,25 @@ import UserNotifications
                                                      verified: verifiedFilter) else { return }
         pendingReturn = id
         action("return", job: id)
+    }
+}
+
+enum Notifier {
+    private static let log = Logger(subsystem: "io.latentsignal.offscreen", category: "notifications")
+
+    /// Asks for Notifications only when there is one to show. After the first
+    /// answer macOS returns it without prompting again.
+    static func post(_ request: UNNotificationRequest) {
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, error in
+            guard granted else {
+                log.warning("notification \(request.identifier, privacy: .public) not shown: \(error?.localizedDescription ?? "not allowed", privacy: .public)")
+                return
+            }
+            center.add(request) { error in
+                if let error { log.warning("notification \(request.identifier, privacy: .public) failed: \(error.localizedDescription, privacy: .public)") }
+            }
+        }
     }
 }
 
@@ -440,9 +533,13 @@ final class NotificationHandler: NSObject, UNUserNotificationCenterDelegate, @un
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                              didReceive response: UNNotificationResponse,
                                              withCompletionHandler completionHandler: @escaping () -> Void) {
-        let id = String(response.notification.request.identifier.dropFirst("return-".count))
-        if response.actionIdentifier == "TAKE_BACK" {
+        let identifier = response.notification.request.identifier
+        if identifier.hasPrefix("return-"), response.actionIdentifier == "TAKE_BACK" {
+            let id = String(identifier.dropFirst("return-".count))
             Task { @MainActor in AppState.model.action("take-back", job: id) }
+        } else if identifier.hasPrefix("failed-"), response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+                  let path = response.notification.request.content.userInfo["artifacts"] as? String {
+            Task { @MainActor in AppState.model.revealArtifacts(path) }
         }
         completionHandler()
     }
@@ -464,6 +561,37 @@ final class NotificationHandler: NSObject, UNUserNotificationCenterDelegate, @un
     }
 }
 
+/// Queued and running jobs from both lanes, then the last finished ones,
+/// each with a submenu of its actions.
+struct JobsMenu: View {
+    let model: HostModel
+
+    var body: some View {
+        Text("Jobs")
+        if model.jobs.active.isEmpty { Text("No queued or running jobs") }
+        ForEach(model.jobs.active, id: \.id) { job in
+            Menu(JobList.activeTitle(job, now: model.now)) {
+                if !job.reason.isEmpty { Text(job.reason) }
+                Button(model.cancelling.contains(job.id) ? "Cancelling…" : "Cancel") { model.cancel(job) }
+                    .disabled(model.cancelling.contains(job.id))
+                Button("Copy Job ID") { model.copyID(job.id) }
+            }
+        }
+        if !model.jobs.recent.isEmpty {
+            Divider()
+            Text("Recently finished")
+            ForEach(model.jobs.recent, id: \.id) { job in
+                Menu(JobList.recentTitle(job, now: model.now)) {
+                    if !job.reason.isEmpty { Text(job.reason) }
+                    Button("Reveal Artifacts") { model.revealArtifacts(job.artifacts) }
+                        .disabled(job.artifacts.isEmpty)
+                    Button("Copy Job ID") { model.copyID(job.id) }
+                }
+            }
+        }
+    }
+}
+
 @main struct OffscreenApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
@@ -480,6 +608,8 @@ final class NotificationHandler: NSObject, UNUserNotificationCenterDelegate, @un
             let model = AppState.model
             Text(model.daemon.summary)
             if case .notResponding(let detail) = model.daemon, !detail.isEmpty { Text(detail) }
+            Divider()
+            JobsMenu(model: model)
             Divider()
             if let current = model.status {
                 if let job = current.running {
@@ -514,7 +644,7 @@ final class NotificationHandler: NSObject, UNUserNotificationCenterDelegate, @un
                 Divider()
                 Text(error)
                     .foregroundStyle(.red)
-                    .accessibilityLabel("Host action failed: \(error)")
+                    .accessibilityLabel("Action failed: \(error)")
                 Button("Dismiss error") { model.dismissActionError() }
             }
             Divider()
@@ -522,8 +652,9 @@ final class NotificationHandler: NSObject, UNUserNotificationCenterDelegate, @un
                 .disabled(model.daemon.busy || model.controlling)
             Button("Quit Offscreen") { NSApplication.shared.terminate(nil) }
         } label: {
-            Image(nsImage: MenuBarIcon.image(running: AppState.model.status?.running != nil))
-                .accessibilityLabel("Offscreen")
+            let state = AppState.model.iconState
+            Image(nsImage: MenuBarIcon.image(running: state != .idle, attention: state == .attention))
+                .accessibilityLabel(state.label)
         }
     }
 }

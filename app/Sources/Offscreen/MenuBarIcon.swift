@@ -2,22 +2,24 @@ import AppKit
 
 /// The offscreen logo as a menu bar template image: an empty display in front
 /// of a filled one, cut apart by a gap. While a job runs, a cursor shows on the
-/// display behind. Coordinates are Retina pixels (half a point), so edges land
-/// on whole pixels.
+/// display behind; when something needs attention, an exclamation mark fills
+/// the front display. Coordinates are Retina pixels (half a point), so edges
+/// land on whole pixels.
 enum MenuBarIcon {
     static let size = NSSize(width: 23, height: 19)
 
-    static func image(running: Bool) -> NSImage {
+    static func image(running: Bool, attention: Bool = false) -> NSImage {
         let image = NSImage(size: size, flipped: true) { _ in
-            draw(running: running)
+            draw(running: running, attention: attention)
             return true
         }
         image.isTemplate = true
-        image.accessibilityDescription = running ? "Offscreen, job running" : "Offscreen"
+        image.accessibilityDescription = attention ? "Offscreen, needs attention"
+            : running ? "Offscreen, job running" : "Offscreen"
         return image
     }
 
-    private static func draw(running: Bool) {
+    private static func draw(running: Bool, attention: Bool) {
         guard let context = NSGraphicsContext.current else { return }
         context.saveGraphicsState()
         defer { context.restoreGraphicsState() }
@@ -42,5 +44,9 @@ enum MenuBarIcon {
         let outline = NSBezierPath(roundedRect: front, xRadius: 4, yRadius: 4)
         outline.lineWidth = 3
         outline.stroke()
+        if attention {
+            NSBezierPath(rect: NSRect(x: 17, y: 19, width: 3, height: 8)).fill()
+            NSBezierPath(rect: NSRect(x: 17, y: 29, width: 3, height: 3)).fill()
+        }
     }
 }

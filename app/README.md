@@ -2,6 +2,10 @@
 
 The host lane uses a native macOS menu bar app. A nonactivating panel appears automatically for the ten-second host-job countdown, with a visible **Not now** button; the menu offers the same action. It does not activate the app or request keyboard focus. While the daemon has a host job queued or running, it sends a fresh desktop signal to the daemon each second over the owner-only Unix socket. The VM lane works without this app. The helper uses Input Monitoring to listen for input and notifications to offer **Take back now**. It asks for Input Monitoring only once a host job exists, and for Notifications only when it first has one to show. It does not request Accessibility.
 
+## Jobs menu
+
+The menu lists every queued and running job from both lanes (project · task, lane, state, elapsed time), then the last five finished jobs with their result. Each job has a submenu: **Cancel** for active jobs (the daemon's normal cancel path), **Reveal Artifacts** for finished jobs, and **Copy Job ID** for all. The app reads `GET /jobs` on its one-second heartbeat. A job that fails while the app is running posts a notification (click it to reveal the artifacts) and puts the icon in its attention state, an exclamation mark in the front display, until the menu is next opened and closed. A pending host action (countdown, Not now, Take back) or a failed menu action also shows attention. The status item's accessibility label reads `Offscreen`, `Offscreen, jobs running` or `Offscreen, needs attention`.
+
 ## Build from source
 
 Install Xcode. From the repository root, run:
