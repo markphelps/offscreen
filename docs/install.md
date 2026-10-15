@@ -1,15 +1,62 @@
 # Installing offscreen
 
+Install with Homebrew unless you're working on Offscreen itself. [Building from source](#build-from-source) is the contributor path.
+
 ## Requirements
 
-- An Apple silicon Mac.
-- Full Xcode selected as the developer directory. Check that `xcode-select -p` points to Xcode's `Contents/Developer` directory and that `xcodebuild -version` reports Xcode. Xcode also provides the Swift 6.2+ that builds the Offscreen menu bar app; check with `swift --version`.
-- [Tart](https://tart.run/) on `PATH`.
-- Go 1.27 or newer.
+- An Apple silicon Mac running macOS 14 or later.
+- Full Xcode selected as the developer directory, for Xcode projects such as the [Hello example](../examples/hello/README.md). Check that `xcode-select -p` points to Xcode's `Contents/Developer` directory and that `xcodebuild -version` reports Xcode. A source build also needs the Swift 6.2+ that Xcode provides for the Offscreen menu bar app; check with `swift --version`.
+- [Tart](https://tart.run/) on `PATH`. The Homebrew cask installs it for you. For a source install, run `brew install cirruslabs/cli/tart`.
+- For a source install only: Go 1.27 or newer.
 
-The default guest image includes macOS and Xcode and may take time and disk space to download. You do **not** need mise or Homebrew to use offscreen.
+The default guest image includes macOS and Xcode and may take time and disk space to download.
 
-## Build and install
+If Tart is missing, VM jobs and image commands fail with `tart isn't installed or isn't on PATH`. Install it with `brew install cirruslabs/cli/tart`. If the error came from the daemon, also run `offscreen daemon install` from a shell where `tart` is on `PATH`: the daemon finds Tart through the `PATH` recorded when it was installed.
+
+## Install with Homebrew
+
+```sh
+brew install --cask markphelps/tap/offscreen
+open -a Offscreen
+```
+
+The cask installs all three parts of Offscreen, plus Tart:
+
+| Part | Installed as |
+| --- | --- |
+| `offscreen` CLI | In Homebrew's `bin` directory, plus `ofs` as a shorter name |
+| `offscreend` daemon | In Homebrew's `bin` directory. The cask runs `offscreen daemon install`, which copies it into a signed `OffscreenDaemon.app` in the state directory, run by the `io.latentsignal.offscreend` LaunchAgent |
+| **Offscreen** menu bar app | `/Applications/Offscreen.app` |
+| Tart | The `cirruslabs/cli/tart` formula, if it isn't installed already |
+
+Offscreen is ad-hoc signed, not signed with a Developer ID or notarized. The cask removes the quarantine attribute from `offscreen`, `offscreend` and Offscreen.app so that macOS opens them, which skips Gatekeeper's check. Install it only if you trust this repository.
+
+The cask doesn't start Offscreen at login. To do that, add Offscreen.app in System Settings > General > Login Items & Extensions > Open at Login.
+
+### Upgrade
+
+```sh
+brew upgrade --cask offscreen
+open -a Offscreen
+```
+
+An upgrade quits Offscreen and reinstalls the daemon so that it matches the new CLI; open Offscreen again afterward. Because the build is ad-hoc signed, macOS may ask again for Local Network, Notifications or Input Monitoring after an upgrade. Grant them as described in [Permissions](#permissions).
+
+### Uninstall
+
+```sh
+brew uninstall --cask offscreen
+```
+
+This quits Offscreen, runs `offscreen daemon uninstall`, and removes the binaries, the `ofs` alias and the app. Your job history, config and images stay. `brew uninstall --zap --cask offscreen` also deletes `~/Library/Application Support/offscreen` (job history, artifacts, logs and the user config) and Offscreen's preferences. Neither removes Tart or your Tart images; use `tart list` and `tart delete` for those, and `brew uninstall cirruslabs/cli/tart` for Tart itself.
+
+### Don't mix Homebrew and source installs
+
+A source install and the cask install the same app identifier and the same daemon LaunchAgent, so having both leaves you with two copies of Offscreen and whichever CLI comes first on `PATH`. Before you switch, remove the other one: run `mise run uninstall` (or `scripts/install.sh uninstall`) in your checkout before installing the cask, and `brew uninstall --cask offscreen` before a source install.
+
+## Build from source
+
+Install Tart first (`brew install cirruslabs/cli/tart`). You don't need mise to build.
 
 ```sh
 git clone https://github.com/markphelps/offscreen.git
@@ -31,9 +78,18 @@ The script builds everything first, so a failed build leaves your current instal
 
 Rerun the install after pulling changes. `offscreen version` shows whether the running daemon matches the CLI, and the Offscreen menu says when they differ.
 
-### Running Offscreen
+### Upgrading from an older install
 
-Offscreen owns the daemon, the way Docker Desktop does. Opening Offscreen (at login, or with `open -a Offscreen`) starts the daemon; **Quit Offscreen** in its menu stops it. If jobs are queued or running, Quit asks "Quit and cancel N jobs?" first and cancels them cleanly. **Restart Daemon** in the menu restarts it the same way, for example after you change the [user config](config.md#user-config).
+Older installs called the menu bar app **Offscreen Helper** (`~/Applications/OffscreenHelper.app`, identifier `dev.offscreen.helper`) and the daemon `dev.offscreen.offscreend`. `mise run install` removes the old app and both old LaunchAgents when they are offscreen's own. Because the identifiers changed, macOS treats Offscreen as a new app:
+
+- Grant **Local Network** to Offscreen Daemon and **Input Monitoring** and **Notifications** to Offscreen again when asked.
+- Stale **Offscreen Helper** rows (Input Monitoring, Notifications) can stay in System Settings > Privacy & Security and System Settings > Notifications. Offscreen never edits the permission database, so remove them yourself with the **-** button or turn them off.
+- An old **Offscreen Daemon** row can also stay under Local Network. That pane has no remove button, and the old row is harmless. If VM jobs fail at guest SSH, turn every **Offscreen Daemon** switch off and on again.
+- The host-lane settings `VerifiedInputFilter` and `ManualReturn` were stored under the old identifier. If you had set either, set it again under the new one after rerunning the [input probe](../app/README.md#input-discrimination-probe), for example `defaults write io.latentsignal.offscreen ManualReturn -bool YES`, then remove the old ones with `defaults delete dev.offscreen.helper`.
+
+## Running Offscreen
+
+Offscreen owns the daemon, the way Docker Desktop does. Opening Offscreen (at login if it's set up to start then, or with `open -a Offscreen`) starts the daemon; **Quit Offscreen** in its menu stops it. If jobs are queued or running, Quit asks "Quit and cancel N jobs?" first and cancels them cleanly. **Restart Daemon** in the menu restarts it the same way, for example after you change the [user config](config.md#user-config).
 
 The CLI never starts Offscreen for you. When it isn't running, commands that need the daemon fail with:
 
@@ -41,7 +97,7 @@ The CLI never starts Offscreen for you. When it isn't running, commands that nee
 Offscreen isn't running. Open it with: open -a Offscreen
 ```
 
-### Permissions
+## Permissions
 
 Offscreen asks for each permission only when it needs it:
 
@@ -51,16 +107,7 @@ Offscreen asks for each permission only when it needs it:
 | Notifications | **Offscreen** | The first time Offscreen has a notification to show (a failed job, or **Take back now** on the host lane) |
 | Input Monitoring | **Offscreen** | Once a host-lane job is queued. A user who only runs VM jobs is never asked. |
 
-No Accessibility permission is needed. When macOS asks, allow **Offscreen Daemon** in System Settings > Privacy & Security > Local Network; the install command alone does not establish that grant. If guest SSH repeatedly reports "no route to host," check that setting and retry; the message can also indicate other routing problems.
-
-### Upgrading from an older install
-
-Older installs called the menu bar app **Offscreen Helper** (`~/Applications/OffscreenHelper.app`, identifier `dev.offscreen.helper`) and the daemon `dev.offscreen.offscreend`. `mise run install` removes the old app and both old LaunchAgents when they are offscreen's own. Because the identifiers changed, macOS treats Offscreen as a new app:
-
-- Grant **Local Network** to Offscreen Daemon and **Input Monitoring** and **Notifications** to Offscreen again when asked.
-- Stale **Offscreen Helper** rows (Input Monitoring, Notifications) can stay in System Settings > Privacy & Security and System Settings > Notifications. Offscreen never edits the permission database, so remove them yourself with the **-** button or turn them off.
-- An old **Offscreen Daemon** row can also stay under Local Network. That pane has no remove button, and the old row is harmless. If VM jobs fail at guest SSH, turn every **Offscreen Daemon** switch off and on again.
-- The host-lane settings `VerifiedInputFilter` and `ManualReturn` were stored under the old identifier. If you had set either, set it again under the new one after rerunning the [input probe](../app/README.md#input-discrimination-probe), for example `defaults write io.latentsignal.offscreen ManualReturn -bool YES`, then remove the old ones with `defaults delete dev.offscreen.helper`.
+No Accessibility permission is needed. When macOS asks, allow **Offscreen Daemon** in System Settings > Privacy & Security > Local Network; installing alone does not establish that grant. If guest SSH repeatedly reports "no route to host," check that setting and retry; the message can also indicate other routing problems.
 
 ## Build the golden image
 
@@ -73,17 +120,12 @@ This pulls the base image if needed, checks guest auto-login and GUI automation,
 ## Try the example
 
 ```sh
-cd examples/hello
+git clone https://github.com/markphelps/offscreen.git   # if you installed with Homebrew
+cd offscreen/examples/hello
 offscreen run hello test-ui
 ```
 
 The Hello example builds its small macOS app on the host, then runs XCUITest in the guest. You can also run `offscreen run hello launch` to save a screenshot. A blocking run streams command output and ends with a job ID and artifact directory on stderr; the guest clone is normally deleted. See [the example](../examples/hello/README.md) for the tasks.
-
-## Homebrew (not yet published)
-
-A Homebrew cask is configured for `markphelps/homebrew-tap`, but **has not been published**. Once a release and the tap exist, `brew install --cask markphelps/tap/offscreen` will be an alternative to building from source. The cask is for the two Go binaries only; it does not include the Offscreen menu bar app, so build from source for now.
-
-The release binaries are unsigned and unnotarized; the locally installed daemon app uses ad-hoc signing only. The cask removes quarantine from the two staged binaries, which bypasses Gatekeeper's verification. Install only if you trust the source; signing and notarization are preferable.
 
 ## Host lane
 

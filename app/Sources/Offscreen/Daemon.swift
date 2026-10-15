@@ -8,7 +8,7 @@ enum DaemonControlError: Error, CustomStringConvertible {
     var description: String {
         switch self {
         case .launchctl(let message): message
-        case .notInstalled: "The daemon isn't installed. Run mise run install in the offscreen checkout."
+        case .notInstalled: "The daemon isn't installed. Run offscreen daemon install, or reinstall Offscreen."
         case .stillRunning: "The daemon didn't stop within 20 seconds."
         }
     }

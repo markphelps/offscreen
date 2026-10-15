@@ -74,7 +74,7 @@ These affect the user's machine, desktop, or shared state. Don't run them withou
 
 ## Troubleshooting
 
-- **`offscreen: command not found`**: it isn't installed or isn't on `PATH` (default `~/.local/bin`). Tell the user; don't install it yourself.
+- **`offscreen: command not found`**: it isn't installed or isn't on `PATH` (Homebrew's `bin` for a cask install, `~/.local/bin` for a source install). Tell the user (`brew install --cask markphelps/tap/offscreen` installs it); don't install it yourself.
 - **Exit 70 or a daemon connection error**: run `offscreen version`. If it says `daemon: not running` (the error reads `Offscreen isn't running`), ask the user to open the Offscreen app (`open -a Offscreen`). For a protocol mismatch, ask them to choose Restart Daemon in the Offscreen menu. Don't open or restart it yourself.
 - **`tart isn't installed or isn't on PATH`**: VM jobs and image commands need Tart. Ask the user to install it (`brew install cirruslabs/cli/tart`). If the error came from the daemon, also ask them to run `offscreen daemon install` from a shell where `tart` is on `PATH`, because the daemon uses the `PATH` recorded at install. Don't install Tart yourself.
 - **No golden image**: VM jobs need one. Ask the user to run `offscreen image build`; it downloads a large macOS + Xcode image and takes a while.

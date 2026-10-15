@@ -1,6 +1,6 @@
 # Offscreen menu bar app
 
-**Offscreen** is the menu bar app that comes with the CLI and daemon; `mise run install` installs all three (see the [install guide](../docs/install.md)). It starts at login from `~/Library/LaunchAgents/io.latentsignal.offscreen.plist` and owns the daemon's lifecycle.
+**Offscreen** is the menu bar app that comes with the CLI and daemon; the Homebrew cask and `mise run install` both install all three (see the [install guide](../docs/install.md)). A source install starts it at login from `~/Library/LaunchAgents/io.latentsignal.offscreen.plist`; with Homebrew, add it as a login item yourself. It owns the daemon's lifecycle.
 
 ## Daemon controls
 

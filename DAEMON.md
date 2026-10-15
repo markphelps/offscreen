@@ -31,7 +31,7 @@ flowchart LR
 ```
 
 - The LaunchAgent carries `OFFSCREEN_CONFIG`, `OFFSCREEN_STATE_DIR` (if set) and the installer's `PATH`, so launchd can find Tart.
-- `mise run install` (`scripts/install.sh`) runs this step between building and starting the Offscreen app. Run it by hand only after rebuilding `offscreend` yourself.
+- `mise run install` (`scripts/install.sh`) runs this step between building and starting the Offscreen app, and the Homebrew cask runs it after every install and upgrade. Run it by hand only after rebuilding `offscreend` yourself.
 - **Reinstall after rebuilding `offscreend`.**
 - `offscreen daemon uninstall` stops the service and removes only its LaunchAgent plist. The bundle stays.
 - Install starts the daemon once so it can check that it answers. After that, the Offscreen app starts and stops it.
@@ -104,7 +104,7 @@ The compatibility rules:
 - **A daemon too old to use is refused by the client.** If the daemon's protocol is below the client's minimum, every command that talks to it fails with one line plus a hint to restart the daemon from the Offscreen menu, and exits 70. The current minimum is 0, so every daemon is usable.
 - **An older but usable daemon gets a warning.** `status` and `run` print one `warning:` line on stderr suggesting a restart. Stdout is unchanged.
 
-Run `offscreen version` to see both sides. After upgrading, run `mise run install`, which restarts the daemon with the new build. To restart without reinstalling, choose Restart Daemon in the Offscreen menu. The daemon logs its build version and protocol when it starts.
+Run `offscreen version` to see both sides. After pulling source changes, run `mise run install`, which restarts the daemon with the new build; `brew upgrade --cask offscreen` does the same for a Homebrew install. To restart without reinstalling, choose Restart Daemon in the Offscreen menu. The daemon logs its build version and protocol when it starts.
 
 ## Caller environment
 
