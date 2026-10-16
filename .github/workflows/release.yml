@@ -46,6 +46,11 @@ jobs:
           cache: false
       - name: Go and Swift unit tests
         run: mise run test
+        env:
+          # mise run installs every missing tool in mise.toml. Skip
+          # swift-format: releases don't lint, and building it from source
+          # here would run unpinned SwiftPM dependencies in a token job.
+          MISE_DISABLE_TOOLS: spm:swiftlang/swift-format
       - name: GoReleaser
         run: goreleaser release --clean
         env:
