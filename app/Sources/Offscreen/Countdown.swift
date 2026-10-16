@@ -14,9 +14,10 @@ enum CountdownPlacement {
     static func frame(panelSize: NSSize, visibleFrame: NSRect) -> NSRect {
         let width = min(panelSize.width, visibleFrame.width)
         let height = min(panelSize.height, visibleFrame.height)
-        return NSRect(x: visibleFrame.midX - width / 2,
-                      y: max(visibleFrame.minY, visibleFrame.maxY - height - 16),
-                      width: width, height: height)
+        return NSRect(
+            x: visibleFrame.midX - width / 2,
+            y: max(visibleFrame.minY, visibleFrame.maxY - height - 16),
+            width: width, height: height)
     }
 }
 
@@ -30,9 +31,10 @@ enum CountdownPlacement {
     init(jobID: String, onNotNow: @escaping (String) -> Void) {
         self.jobID = jobID
         action = CountdownAction(jobID: jobID, onNotNow: onNotNow)
-        panel = NonactivatingCountdownPanel(contentRect: NSRect(x: 0, y: 0, width: 300, height: 122),
-                                            styleMask: [.titled, .nonactivatingPanel],
-                                            backing: .buffered, defer: false)
+        panel = NonactivatingCountdownPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 300, height: 122),
+            styleMask: [.titled, .nonactivatingPanel],
+            backing: .buffered, defer: false)
         label = NSTextField(labelWithString: "Host job starting")
         detail = NSTextField(labelWithString: "")
         panel.title = "Offscreen"
@@ -45,8 +47,9 @@ enum CountdownPlacement {
         detail.lineBreakMode = .byWordWrapping
         detail.maximumNumberOfLines = 2
         detail.preferredMaxLayoutWidth = 268
-        let button = CountdownButton(title: "Not now (30 minutes)", target: action,
-                                     action: #selector(CountdownAction.notNow))
+        let button = CountdownButton(
+            title: "Not now (30 minutes)", target: action,
+            action: #selector(CountdownAction.notNow))
         button.bezelStyle = .rounded
         button.setAccessibilityLabel("Not now: pause host jobs for 30 minutes")
         let stack = NSStackView(views: [label, detail, button])
@@ -60,7 +63,7 @@ enum CountdownPlacement {
                 stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
                 stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
                 stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 12),
-                stack.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -12)
+                stack.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -12),
             ])
         }
     }
@@ -69,14 +72,17 @@ enum CountdownPlacement {
         label.stringValue = seconds.map { "Host job starts in \($0) seconds" } ?? "Host job waiting for idle desktop"
         detail.stringValue = error ?? "Use Not now to pause host jobs before they take the screen."
         if !panel.isVisible {
-            let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }
+            let screen =
+                NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }
                 ?? NSScreen.main ?? NSScreen.screens.first
             if let screen {
                 panel.layoutIfNeeded()
-                panel.setFrame(CountdownPlacement.frame(panelSize: panel.frame.size,
-                                                         visibleFrame: screen.visibleFrame), display: true)
+                panel.setFrame(
+                    CountdownPlacement.frame(
+                        panelSize: panel.frame.size,
+                        visibleFrame: screen.visibleFrame), display: true)
             }
-            panel.orderFrontRegardless() // no activation or key-window request
+            panel.orderFrontRegardless()  // no activation or key-window request
         }
     }
 

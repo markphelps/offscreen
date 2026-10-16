@@ -14,7 +14,9 @@ enum MenuBarIcon {
             return true
         }
         image.isTemplate = true
-        image.accessibilityDescription = attention ? "Offscreen, needs attention"
+        image.accessibilityDescription =
+            attention
+            ? "Offscreen, needs attention"
             : running ? "Offscreen, job running" : "Offscreen"
         return image
     }

@@ -1,5 +1,5 @@
-import Foundation
 import Darwin
+import Foundation
 
 struct HostJob: Decodable, Sendable, Equatable {
     let id: String
@@ -76,7 +76,8 @@ struct Bridge: HostBridge {
     let socketPath: String
 
     static func defaultSocket() -> String {
-        let state = ProcessInfo.processInfo.environment["OFFSCREEN_STATE_DIR"]
+        let state =
+            ProcessInfo.processInfo.environment["OFFSCREEN_STATE_DIR"]
             ?? (NSHomeDirectory() + "/Library/Application Support/offscreen")
         return state + "/offscreend.sock"
     }
@@ -106,14 +107,19 @@ struct Bridge: HostBridge {
         _ = try send("POST", "/jobs/\(id)/cancel", timeout: 140)
     }
 
-    private func send(_ method: String, _ path: String, body: Data = Data(), timeout: Int = 3,
-                      limit: Int = 65536) throws -> Data {
+    private func send(
+        _ method: String, _ path: String, body: Data = Data(), timeout: Int = 3,
+        limit: Int = 65536
+    ) throws -> Data {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw BridgeError.socket("socket: \(errno)") }
         defer { _ = close(fd) }
         var noSigpipe: Int32 = 1
-        guard setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe,
-                         socklen_t(MemoryLayout<Int32>.size)) == 0 else {
+        guard
+            setsockopt(
+                fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe,
+                socklen_t(MemoryLayout<Int32>.size)) == 0
+        else {
             throw BridgeError.socket("configure socket: \(errno)")
         }
         var address = sockaddr_un()
@@ -132,7 +138,8 @@ struct Bridge: HostBridge {
         guard result == 0 else { throw BridgeError.socket("connect: \(errno)") }
         var receive = timeval(tv_sec: timeout, tv_usec: 0)
         _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &receive, socklen_t(MemoryLayout<timeval>.size))
-        let header = "\(method) \(path) HTTP/1.0\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
+        let header =
+            "\(method) \(path) HTTP/1.0\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
         let bytes = Array(header.utf8) + body
         var sent = 0
         while sent < bytes.count {
@@ -151,8 +158,9 @@ struct Bridge: HostBridge {
             response.append(contentsOf: buffer.prefix(count))
         }
         guard let separator = response.range(of: Data("\r\n\r\n".utf8)),
-              let statusLine = String(data: response.prefix(100), encoding: .utf8)?.split(separator: "\r\n").first,
-              let code = Int(statusLine.split(separator: " ").dropFirst().first ?? "") else {
+            let statusLine = String(data: response.prefix(100), encoding: .utf8)?.split(separator: "\r\n").first,
+            let code = Int(statusLine.split(separator: " ").dropFirst().first ?? "")
+        else {
             throw BridgeError.invalidResponse
         }
         let payload = response[separator.upperBound...]

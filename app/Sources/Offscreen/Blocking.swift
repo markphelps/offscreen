@@ -7,12 +7,14 @@ import os
 /// concurrent, and GCD adds threads while its work blocks, so parallel
 /// cancels don't wait behind each other.
 enum Blocking {
-    private static let queue = DispatchQueue(label: "io.latentsignal.offscreen.blocking",
-                                             qos: .userInitiated, attributes: .concurrent)
+    private static let queue = DispatchQueue(
+        label: "io.latentsignal.offscreen.blocking",
+        qos: .userInitiated, attributes: .concurrent)
     // Timeouts fire from their own serial queue, which gets a thread even
     // when blocked work fills the concurrent one.
-    private static let timeouts = DispatchQueue(label: "io.latentsignal.offscreen.blocking.timeouts",
-                                                qos: .userInitiated)
+    private static let timeouts = DispatchQueue(
+        label: "io.latentsignal.offscreen.blocking.timeouts",
+        qos: .userInitiated)
 
     static func run<T: Sendable, E: Error>(_ work: @escaping @Sendable () throws(E) -> T) async throws(E) -> T {
         let result = await withCheckedContinuation { (continuation: CheckedContinuation<Result<T, E>, Never>) in

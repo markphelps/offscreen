@@ -13,8 +13,10 @@ struct DaemonJob: Decodable, Sendable, Equatable {
     let created: Date?
     let updated: Date?
 
-    init(id: String, project: String = "", task: String = "", lane: String = "vm", state: String,
-         code: Int = 0, artifacts: String = "", reason: String = "", created: Date? = nil, updated: Date? = nil) {
+    init(
+        id: String, project: String = "", task: String = "", lane: String = "vm", state: String,
+        code: Int = 0, artifacts: String = "", reason: String = "", created: Date? = nil, updated: Date? = nil
+    ) {
         self.id = id
         self.project = project
         self.task = task
@@ -83,9 +85,10 @@ struct JobList: Equatable {
 
     init(_ jobs: [DaemonJob]) {
         active = jobs.filter(\.active).sorted { ($0.created ?? .distantPast) < ($1.created ?? .distantPast) }
-        recent = Array(jobs.filter { !$0.active }
-            .sorted { ($0.updated ?? .distantPast) > ($1.updated ?? .distantPast) }
-            .prefix(Self.recentLimit))
+        recent = Array(
+            jobs.filter { !$0.active }
+                .sorted { ($0.updated ?? .distantPast) > ($1.updated ?? .distantPast) }
+                .prefix(Self.recentLimit))
     }
 
     /// "hello · launch — vm · running · 1:05"

@@ -1,6 +1,7 @@
 import Dispatch
 import Foundation
 import XCTest
+
 @testable import Offscreen
 
 /// Answers HostModel's daemon calls from canned replies. A gated path blocks
@@ -82,20 +83,24 @@ private final class FakeControl: DaemonLauncher, @unchecked Sendable {
 }
 
 private func hostStatus(running: String? = nil, paused: Bool = false) -> HostStatus {
-    HostStatus(queued: 0, running: running.map { HostJob(id: $0, project: "p", task: "", state: "running") },
-               waitingReason: "", countdownJob: nil, notNowJob: nil, countdownSeconds: nil,
-               returnJob: nil, graceSeconds: nil, paused: paused)
+    HostStatus(
+        queued: 0, running: running.map { HostJob(id: $0, project: "p", task: "", state: "running") },
+        waitingReason: "", countdownJob: nil, notNowJob: nil, countdownSeconds: nil,
+        returnJob: nil, graceSeconds: nil, paused: paused)
 }
 
 @MainActor
 final class HostModelTests: XCTestCase {
-    private func model(_ bridge: FakeBridge, control: FakeControl = FakeControl(),
-                       confirm: @escaping @MainActor (Confirmation) -> Bool = { _ in true },
-                       sessionStopLimit: Double = 5) -> HostModel {
-        HostModel(bridge: bridge, manualReturn: false, verifiedFilter: true, post: { _ in },
-                  control: control, confirm: confirm, sessionStopLimit: sessionStopLimit,
-                  login: FakeLogin(), startedByAgent: false, sourceInstalled: { false }, bundled: true,
-                  exitApp: { XCTFail("the app must not exit") })
+    private func model(
+        _ bridge: FakeBridge, control: FakeControl = FakeControl(),
+        confirm: @escaping @MainActor (Confirmation) -> Bool = { _ in true },
+        sessionStopLimit: Double = 5
+    ) -> HostModel {
+        HostModel(
+            bridge: bridge, manualReturn: false, verifiedFilter: true, post: { _ in },
+            control: control, confirm: confirm, sessionStopLimit: sessionStopLimit,
+            login: FakeLogin(), startedByAgent: false, sourceInstalled: { false }, bundled: true,
+            exitApp: { XCTFail("the app must not exit") })
     }
 
     func testRestartReportsAFailedStopAndDoesNotStart() async {
@@ -124,7 +129,12 @@ final class HostModelTests: XCTestCase {
         let control = FakeControl()
         control.failStop(DaemonControlError.stillRunning(seconds: 20))
         var asked: [Confirmation] = []
-        let declining = model(FakeBridge(), control: control, confirm: { asked.append($0); return false })
+        let declining = model(
+            FakeBridge(), control: control,
+            confirm: {
+                asked.append($0)
+                return false
+            })
 
         let declined = await declining.quit(systemQuit: false)
         XCTAssertFalse(declined)
@@ -138,7 +148,12 @@ final class HostModelTests: XCTestCase {
 
     func testQuitAfterAStopDoesNotAsk() async {
         var asked = 0
-        let model = model(FakeBridge(), confirm: { _ in asked += 1; return false })
+        let model = model(
+            FakeBridge(),
+            confirm: { _ in
+                asked += 1
+                return false
+            })
         let quit = await model.quit(systemQuit: false)
         XCTAssertTrue(quit)
         XCTAssertEqual(asked, 0, "no active jobs and a clean stop need no question")
@@ -148,10 +163,15 @@ final class HostModelTests: XCTestCase {
         let bridge = FakeBridge()
         bridge.setJobs([DaemonJob(id: "a", state: "running")])
         let control = FakeControl()
-        let gate = control.gateStop() // the daemon never exits
+        let gate = control.gateStop()  // the daemon never exits
         var asked = 0
-        let model = model(bridge, control: control, confirm: { _ in asked += 1; return false },
-                          sessionStopLimit: 0.2)
+        let model = model(
+            bridge, control: control,
+            confirm: { _ in
+                asked += 1
+                return false
+            },
+            sessionStopLimit: 0.2)
 
         let started = Date()
         let quit = await model.quit(systemQuit: true)
@@ -170,7 +190,7 @@ final class HostModelTests: XCTestCase {
         let model = model(FakeBridge(), control: control, sessionStopLimit: 0.2)
 
         let restart = model.restart()
-        while control.calls.isEmpty { await Task.yield() } // the restart's stop is in flight
+        while control.calls.isEmpty { await Task.yield() }  // the restart's stop is in flight
         XCTAssertTrue(model.controlling)
 
         let quit = await model.quit(systemQuit: true)
@@ -186,7 +206,12 @@ final class HostModelTests: XCTestCase {
         let bridge = FakeBridge()
         bridge.setJobs([DaemonJob(id: "a", state: "running")])
         var asked = 0
-        let model = model(bridge, confirm: { _ in asked += 1; return true }, sessionStopLimit: 0.2)
+        let model = model(
+            bridge,
+            confirm: { _ in
+                asked += 1
+                return true
+            }, sessionStopLimit: 0.2)
         _ = await model.quit(systemQuit: true)
 
         await model.restart()?.value
@@ -200,9 +225,11 @@ final class HostModelTests: XCTestCase {
         let bridge = FakeBridge()
         bridge.reply("/host/status", hostStatus())
         let model = model(bridge)
-        await model.refresh()?.value // the first list sets the baseline
+        await model.refresh()?.value  // the first list sets the baseline
         let base = Date(timeIntervalSince1970: 1_000_000)
-        var failed = (0..<7).map { DaemonJob(id: "f\($0)", state: "failed", updated: base.addingTimeInterval(Double($0))) }
+        var failed = (0..<7).map {
+            DaemonJob(id: "f\($0)", state: "failed", updated: base.addingTimeInterval(Double($0)))
+        }
         bridge.setJobs(failed)
         await model.refresh()?.value
         XCTAssertEqual(model.jobs.recent.count, JobList.recentLimit)
@@ -302,7 +329,7 @@ final class HostModelTests: XCTestCase {
         while bridge.calls.isEmpty { await Task.yield() }
         await model.action("pause").value
         XCTAssertEqual(model.status?.paused, true)
-        gate.signal() // the heartbeat's older status reply arrives last
+        gate.signal()  // the heartbeat's older status reply arrives last
         await heartbeat?.value
 
         XCTAssertEqual(model.status?.paused, true)

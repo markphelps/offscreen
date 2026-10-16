@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+
 @testable import Offscreen
 
 /// Stands in for SMAppService. Registering sets the status and, unless the
@@ -65,23 +66,30 @@ private struct Failure: LocalizedError {
 
 final class LoginItemTests: XCTestCase {
     func testMenuGreysOutForASourceInstallAndOutsideABundle() {
-        XCTAssertEqual(LoginItem.menu(status: .notRegistered, sourceInstall: true, bundled: true),
-                       LoginItem.Menu(isOn: true, enabled: false, note: "Started at login by the source install"))
-        XCTAssertEqual(LoginItem.menu(status: .enabled, sourceInstall: true, bundled: true).enabled, false,
-                       "the source install's agent wins even if the app's own is registered")
-        XCTAssertEqual(LoginItem.menu(status: .notFound, sourceInstall: false, bundled: false),
-                       LoginItem.Menu(isOn: false, enabled: false, note: "Start at Login needs Offscreen.app"))
+        XCTAssertEqual(
+            LoginItem.menu(status: .notRegistered, sourceInstall: true, bundled: true),
+            LoginItem.Menu(isOn: true, enabled: false, note: "Started at login by the source install"))
+        XCTAssertEqual(
+            LoginItem.menu(status: .enabled, sourceInstall: true, bundled: true).enabled, false,
+            "the source install's agent wins even if the app's own is registered")
+        XCTAssertEqual(
+            LoginItem.menu(status: .notFound, sourceInstall: false, bundled: false),
+            LoginItem.Menu(isOn: false, enabled: false, note: "Start at Login needs Offscreen.app"))
     }
 
     func testMenuFollowsTheRegistration() {
-        XCTAssertEqual(LoginItem.menu(status: .notRegistered, sourceInstall: false, bundled: true),
-                       LoginItem.Menu(isOn: false, enabled: true))
-        XCTAssertEqual(LoginItem.menu(status: .notFound, sourceInstall: false, bundled: true),
-                       LoginItem.Menu(isOn: false, enabled: true), "never registered reads notFound")
-        XCTAssertEqual(LoginItem.menu(status: .enabled, sourceInstall: false, bundled: true),
-                       LoginItem.Menu(isOn: true, enabled: true))
-        XCTAssertEqual(LoginItem.menu(status: .requiresApproval, sourceInstall: false, bundled: true),
-                       LoginItem.Menu(isOn: true, enabled: true, approve: true))
+        XCTAssertEqual(
+            LoginItem.menu(status: .notRegistered, sourceInstall: false, bundled: true),
+            LoginItem.Menu(isOn: false, enabled: true))
+        XCTAssertEqual(
+            LoginItem.menu(status: .notFound, sourceInstall: false, bundled: true),
+            LoginItem.Menu(isOn: false, enabled: true), "never registered reads notFound")
+        XCTAssertEqual(
+            LoginItem.menu(status: .enabled, sourceInstall: false, bundled: true),
+            LoginItem.Menu(isOn: true, enabled: true))
+        XCTAssertEqual(
+            LoginItem.menu(status: .requiresApproval, sourceInstall: false, bundled: true),
+            LoginItem.Menu(isOn: true, enabled: true, approve: true))
     }
 
     func testSourceInstallIsDetectedByItsAgentFile() throws {
@@ -104,8 +112,10 @@ final class LoginItemTests: XCTestCase {
     }
 
     func testOnlyAHandOpenedCopyOfARegisteredBundleHandsOver() {
-        func handOver(_ status: LoginStatus = .enabled, agent: Bool = false, source: Bool = false,
-                      bundled: Bool = true) -> Bool {
+        func handOver(
+            _ status: LoginStatus = .enabled, agent: Bool = false, source: Bool = false,
+            bundled: Bool = true
+        ) -> Bool {
             LoginItem.shouldHandOver(status: status, startedByAgent: agent, sourceInstall: source, bundled: bundled)
         }
         XCTAssertTrue(handOver())
@@ -120,8 +130,9 @@ final class LoginItemTests: XCTestCase {
     func testHandOverRegistersAgainAndWaitsForTheJob() {
         let login = FakeLogin(status: .enabled)
         XCTAssertEqual(LoginItem.handOver(login, reregister: true, self: 1, within: 1), .running)
-        XCTAssertEqual(login.calls, ["unregister", "register"],
-                       "an upgraded bundle needs unregister then register")
+        XCTAssertEqual(
+            login.calls, ["unregister", "register"],
+            "an upgraded bundle needs unregister then register")
     }
 
     func testHandOverReportsApprovalFailureAndAJobThatNeverStarts() {
@@ -131,8 +142,9 @@ final class LoginItemTests: XCTestCase {
 
         let failing = FakeLogin()
         failing.failRegister(Failure())
-        XCTAssertEqual(LoginItem.handOver(failing, reregister: false, self: 1, within: 1),
-                       .failed("Start at Login failed: boom"))
+        XCTAssertEqual(
+            LoginItem.handOver(failing, reregister: false, self: 1, within: 1),
+            .failed("Start at Login failed: boom"))
 
         let stuck = FakeLogin()
         stuck.neverStartJob()
@@ -151,8 +163,9 @@ final class LoginItemTests: XCTestCase {
     func testOnlyAnEnabledAgentInABundleIsRenewed() {
         XCTAssertTrue(LoginItem.shouldRenew(status: .enabled, sourceInstall: false, bundled: true))
         for status in [LoginStatus.notRegistered, .notFound, .requiresApproval] {
-            XCTAssertFalse(LoginItem.shouldRenew(status: status, sourceInstall: false, bundled: true),
-                           "an upgrade must not turn Start at Login on (\(status))")
+            XCTAssertFalse(
+                LoginItem.shouldRenew(status: status, sourceInstall: false, bundled: true),
+                "an upgrade must not turn Start at Login on (\(status))")
         }
         XCTAssertFalse(LoginItem.shouldRenew(status: .enabled, sourceInstall: true, bundled: true))
         XCTAssertFalse(LoginItem.shouldRenew(status: .enabled, sourceInstall: false, bundled: false))
@@ -167,7 +180,7 @@ final class LoginItemTests: XCTestCase {
 
     func testRenewRefusedForANewBuildIsRetriedOnce() {
         let login = FakeLogin(status: .enabled)
-        login.startJobFromRegister(2) // macOS refuses the first registration of a new build
+        login.startJobFromRegister(2)  // macOS refuses the first registration of a new build
         XCTAssertEqual(LoginItem.renew(login, self: 1, within: 1, retry: 0), .running)
         XCTAssertEqual(login.calls, ["unregister", "register", "unregister", "register"])
 
@@ -188,7 +201,13 @@ final class LoginItemTests: XCTestCase {
 
     func testWaitForExitReturnsOnceTheOthersAreGone() {
         var checks = 0
-        XCTAssertTrue(SingleInstance.waitForExit([10], within: 5, alive: { _ in checks += 1; return checks < 3 }))
+        XCTAssertTrue(
+            SingleInstance.waitForExit(
+                [10], within: 5,
+                alive: { _ in
+                    checks += 1
+                    return checks < 3
+                }))
         XCTAssertTrue(SingleInstance.waitForExit([], within: 0, alive: { _ in true }))
         XCTAssertFalse(SingleInstance.waitForExit([10], within: 0.2, alive: { _ in true }))
     }
@@ -198,13 +217,16 @@ final class LoginItemTests: XCTestCase {
 final class StartAtLoginTests: XCTestCase {
     private final class Exits { var count = 0 }
 
-    private func model(_ login: FakeLogin, agent: Bool, control: DaemonLauncher = NoDaemon(),
-                       confirm: @escaping @MainActor (Confirmation) -> Bool = { _ in true },
-                       exits: Exits) -> HostModel {
-        HostModel(bridge: Bridge(socketPath: "/nonexistent/offscreen.sock"), manualReturn: false, verifiedFilter: true,
-                  post: { _ in }, control: control, confirm: confirm, login: login, startedByAgent: agent,
-                  sourceInstalled: { false }, bundled: true, exitApp: { exits.count += 1 },
-                  handOverRetry: 0.05)
+    private func model(
+        _ login: FakeLogin, agent: Bool, control: DaemonLauncher = NoDaemon(),
+        confirm: @escaping @MainActor (Confirmation) -> Bool = { _ in true },
+        exits: Exits
+    ) -> HostModel {
+        HostModel(
+            bridge: Bridge(socketPath: "/nonexistent/offscreen.sock"), manualReturn: false, verifiedFilter: true,
+            post: { _ in }, control: control, confirm: confirm, login: login, startedByAgent: agent,
+            sourceInstalled: { false }, bundled: true, exitApp: { exits.count += 1 },
+            handOverRetry: 0.05)
     }
 
     func testAQuitDuringAHandoverKeepsThisCopyRunning() async {
@@ -237,7 +259,7 @@ final class StartAtLoginTests: XCTestCase {
 
     func testAHandoverRefusedForANewBuildIsRetriedOnce() async {
         let login = FakeLogin()
-        login.startJobFromRegister(3) // the first registration cycle doesn't start the job
+        login.startJobFromRegister(3)  // the first registration cycle doesn't start the job
         let exits = Exits()
         let model = model(login, agent: false, exits: exits)
         await model.setStartAtLogin(true)?.value
@@ -251,7 +273,9 @@ final class StartAtLoginTests: XCTestCase {
         let exits = Exits()
         let model = model(login, agent: false, exits: exits)
         await model.setStartAtLogin(true)?.value
-        XCTAssertEqual(login.calls, ["register", "unregister", "register"], "a stale record from an earlier build must not block the job")
+        XCTAssertEqual(
+            login.calls, ["register", "unregister", "register"],
+            "a stale record from an earlier build must not block the job")
         XCTAssertEqual(exits.count, 1, "the login job's copy takes over")
         XCTAssertEqual(model.loginItem, LoginItem.Menu(isOn: true, enabled: true))
     }
@@ -272,7 +296,12 @@ final class StartAtLoginTests: XCTestCase {
         let login = FakeLogin(status: .enabled)
         let exits = Exits()
         var asked = 0
-        let model = model(login, agent: false, confirm: { _ in asked += 1; return true }, exits: exits)
+        let model = model(
+            login, agent: false,
+            confirm: { _ in
+                asked += 1
+                return true
+            }, exits: exits)
         await model.setStartAtLogin(false)?.value
         XCTAssertEqual(login.calls, ["unregister"])
         XCTAssertEqual(exits.count, 0)
@@ -324,8 +353,9 @@ final class StartAtLoginTests: XCTestCase {
         XCTAssertEqual(control.order, ["stop"])
         XCTAssertEqual(exits.count, 0)
         XCTAssertFalse(model.controlling)
-        XCTAssertEqual(model.actionError,
-                       "Start at Login is still on. The daemon didn't stop: The daemon didn't stop within 20 seconds.")
+        XCTAssertEqual(
+            model.actionError,
+            "Start at Login is still on. The daemon didn't stop: The daemon didn't stop within 20 seconds.")
     }
 }
 

@@ -1,6 +1,6 @@
-import CoreMediaIO
 import CoreAudio
 import CoreGraphics
+import CoreMediaIO
 import Foundation
 import IOKit
 
@@ -9,36 +9,49 @@ struct Sensors {
         let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOHIDSystem"))
         guard service != 0 else { return nil }
         defer { IOObjectRelease(service) }
-        guard let value = IORegistryEntryCreateCFProperty(service, "HIDIdleTime" as CFString,
-                                                         kCFAllocatorDefault, 0)?.takeRetainedValue() as? NSNumber else { return nil }
+        guard
+            let value = IORegistryEntryCreateCFProperty(
+                service, "HIDIdleTime" as CFString,
+                kCFAllocatorDefault, 0)?.takeRetainedValue() as? NSNumber
+        else { return nil }
         return value.doubleValue / 1_000_000_000
     }
 
     static func microphoneIdle() -> Bool? {
-        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices,
-                                                   mScope: kAudioObjectPropertyScopeGlobal,
-                                                   mElement: kAudioObjectPropertyElementMain)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
         var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr else { return nil }
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr
+        else { return nil }
         var devices = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &devices) == noErr else { return nil }
+        guard
+            AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &devices)
+                == noErr
+        else { return nil }
         for device in devices {
-            var input = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreamConfiguration,
-                                                    mScope: kAudioDevicePropertyScopeInput,
-                                                    mElement: kAudioObjectPropertyElementMain)
+            var input = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyStreamConfiguration,
+                mScope: kAudioDevicePropertyScopeInput,
+                mElement: kAudioObjectPropertyElementMain)
             var streamSize: UInt32 = 0
             guard AudioObjectGetPropertyDataSize(device, &input, 0, nil, &streamSize) == noErr else { return nil }
-            let storage = UnsafeMutableRawPointer.allocate(byteCount: Int(streamSize), alignment: MemoryLayout<AudioBufferList>.alignment)
+            let storage = UnsafeMutableRawPointer.allocate(
+                byteCount: Int(streamSize), alignment: MemoryLayout<AudioBufferList>.alignment)
             defer { storage.deallocate() }
             guard AudioObjectGetPropertyData(device, &input, 0, nil, &streamSize, storage) == noErr else { return nil }
             let buffers = UnsafeMutableAudioBufferListPointer(storage.assumingMemoryBound(to: AudioBufferList.self))
             guard buffers.contains(where: { $0.mNumberChannels > 0 }) else { continue }
-            var running = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
-                                                      mScope: kAudioDevicePropertyScopeInput,
-                                                      mElement: kAudioObjectPropertyElementMain)
+            var running = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+                mScope: kAudioDevicePropertyScopeInput,
+                mElement: kAudioObjectPropertyElementMain)
             var active: UInt32 = 0
             var activeSize = UInt32(MemoryLayout<UInt32>.size)
-            guard AudioObjectGetPropertyData(device, &running, 0, nil, &activeSize, &active) == noErr else { return nil }
+            guard AudioObjectGetPropertyData(device, &running, 0, nil, &activeSize, &active) == noErr else {
+                return nil
+            }
             if active != 0 { return false }
         }
         return true
@@ -58,12 +71,14 @@ struct Sensors {
         let stride = MemoryLayout<CMIOObjectID>.size
         var size: UInt32 = 0
         guard CMIOObjectGetPropertyDataSize(system, &address, 0, nil, &size) == noErr,
-              Int(size) % stride == 0 else { return nil }
+            Int(size) % stride == 0
+        else { return nil }
         if size == 0 { return cameraIdle(deviceStates: []) }
         var devices = [CMIOObjectID](repeating: 0, count: Int(size) / stride)
         var used: UInt32 = 0
         guard CMIOObjectGetPropertyData(system, &address, 0, nil, size, &used, &devices) == noErr,
-              used <= size, Int(used) % stride == 0 else { return nil }
+            used <= size, Int(used) % stride == 0
+        else { return nil }
         var states: [UInt32?] = []
         for device in devices.prefix(Int(used) / stride) {
             var running = CMIOObjectPropertyAddress(
@@ -90,10 +105,11 @@ struct Sensors {
         // An unlocked session normally omits the lock key. Require an active,
         // logged-in console session as well; unknown values stay closed.
         let unlocked = sessionUnlocked(session)
-        return Snapshot(idleSeconds: idleSeconds() ?? 0,
-                        unlocked: unlocked,
-                        displayAwake: CGDisplayIsAsleep(CGMainDisplayID()) == 0,
-                        cameraIdle: cameraIdle() == true, microphoneIdle: microphoneIdle() == true,
-                        inputMonitoring: CGPreflightListenEventAccess(), eventTapReady: eventTapReady)
+        return Snapshot(
+            idleSeconds: idleSeconds() ?? 0,
+            unlocked: unlocked,
+            displayAwake: CGDisplayIsAsleep(CGMainDisplayID()) == 0,
+            cameraIdle: cameraIdle() == true, microphoneIdle: microphoneIdle() == true,
+            inputMonitoring: CGPreflightListenEventAccess(), eventTapReady: eventTapReady)
     }
 }

@@ -1,6 +1,6 @@
 import Foundation
-import os
 import ServiceManagement
+import os
 
 /// SMAppService's status, as the menu needs it.
 enum LoginStatus: Equatable {
@@ -70,14 +70,18 @@ enum LoginItem {
     /// scripts/install.sh writes this agent. It shares the label with the
     /// app's own agent, so only the file tells them apart.
     static func sourceInstalled(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> Bool {
-        FileManager.default.fileExists(atPath: home.appending(
-            path: "Library/LaunchAgents/\(AgentLoginService.label).plist").path)
+        FileManager.default.fileExists(
+            atPath: home.appending(
+                path: "Library/LaunchAgents/\(AgentLoginService.label).plist"
+            ).path)
     }
 
     /// Whether the bundle carries the agent plist; `swift run` has no bundle.
     static func bundled(_ bundle: URL = Bundle.main.bundleURL) -> Bool {
-        FileManager.default.fileExists(atPath: bundle.appending(
-            path: "Contents/Library/LaunchAgents/\(AgentLoginService.label).plist").path)
+        FileManager.default.fileExists(
+            atPath: bundle.appending(
+                path: "Contents/Library/LaunchAgents/\(AgentLoginService.label).plist"
+            ).path)
     }
 
     /// What the Start at Login checkbox shows.
@@ -121,8 +125,10 @@ enum LoginItem {
     /// register() leaves launchd refusing the new signature. On .running the
     /// caller exits 0 without stopping the daemon; the job's copy waits for
     /// that exit (SingleInstance.waitForExit) and keeps the daemon.
-    static func handOver(_ service: any LoginService, reregister: Bool, self pid: Int32 = getpid(),
-                         within seconds: Double = 5) -> HandOver {
+    static func handOver(
+        _ service: any LoginService, reregister: Bool, self pid: Int32 = getpid(),
+        within seconds: Double = 5
+    ) -> HandOver {
         do {
             if reregister { try refresh(service) }
             try service.register()
@@ -154,8 +160,10 @@ enum LoginItem {
     /// a newly installed build, so a failed handover is tried once more
     /// after `retry` seconds. The caller has already decided it was on: by
     /// now Homebrew may have purged the old bundle and its record with it.
-    static func renew(_ service: any LoginService, self pid: Int32 = getpid(),
-                      within seconds: Double = 5, retry: Double = 15) -> HandOver {
+    static func renew(
+        _ service: any LoginService, self pid: Int32 = getpid(),
+        within seconds: Double = 5, retry: Double = 15
+    ) -> HandOver {
         let first = handOver(service, reregister: true, self: pid, within: seconds)
         guard case .failed(let message) = first else { return first }
         log.notice("start at login: renewal refused, retrying in \(retry)s: \(message, privacy: .public)")
@@ -176,7 +184,8 @@ enum LoginItem {
     static func renewAndExit(_ arguments: [String] = CommandLine.arguments) -> Never {
         func say(_ message: String) { FileHandle.standardError.write(Data("offscreen: \(message)\n".utf8)) }
         if let index = arguments.firstIndex(of: renewAfterFlag), index + 1 < arguments.count,
-           let brew = pid_t(arguments[index + 1]) {
+            let brew = pid_t(arguments[index + 1])
+        {
             _ = SingleInstance.waitForExit([brew], within: 600)
             // Let Homebrew's purge settle before registering.
             Thread.sleep(forTimeInterval: 3)
@@ -187,8 +196,11 @@ enum LoginItem {
             }
             exit(0)
         }
-        guard shouldRenew(status: AgentLoginService().status, sourceInstall: sourceInstalled(),
-                          bundled: bundled()) else { exit(0) }
+        guard
+            shouldRenew(
+                status: AgentLoginService().status, sourceInstall: sourceInstalled(),
+                bundled: bundled())
+        else { exit(0) }
         let child = Process()
         child.executableURL = Bundle.main.executableURL
         child.arguments = [renewAfterFlag, String(getppid())]

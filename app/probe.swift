@@ -12,10 +12,15 @@ let callback: CGEventTapCallBack = { _, type, event, _ in
     fflush(stdout)
     return Unmanaged.passUnretained(event)
 }
-guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
-    options: .listenOnly, eventsOfInterest: CGEventMask(mask), callback: callback,
-    userInfo: nil) else {
-    fputs("Event tap unavailable; grant Input Monitoring to this executable and retry. No discrimination result.\n", stderr)
+guard
+    let tap = CGEvent.tapCreate(
+        tap: .cgSessionEventTap, place: .headInsertEventTap,
+        options: .listenOnly, eventsOfInterest: CGEventMask(mask), callback: callback,
+        userInfo: nil)
+else {
+    fputs(
+        "Event tap unavailable; grant Input Monitoring to this executable and retry. No discrimination result.\n",
+        stderr)
     exit(2)
 }
 let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)

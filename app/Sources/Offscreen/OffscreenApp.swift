@@ -1,9 +1,9 @@
 import AppKit
 import CoreGraphics
 import Foundation
-import os
 import SwiftUI
 @preconcurrency import UserNotifications
+import os
 
 @MainActor
 @Observable final class HostModel {
@@ -47,8 +47,9 @@ import SwiftUI
     private var liveStatus: HostStatus? { statusHeld ? nil : status }
 
     var iconState: IconState {
-        IconState.of(jobs: jobs.active, host: status, unseenFailures: !unseenFailures.isEmpty,
-                     actionError: actionError != nil)
+        IconState.of(
+            jobs: jobs.active, host: status, unseenFailures: !unseenFailures.isEmpty,
+            actionError: actionError != nil)
     }
     // The app owns the daemon: it starts it at launch and stops it at quit.
     var daemon: DaemonState = .starting
@@ -110,19 +111,21 @@ import SwiftUI
     // off, quitting and restarting cancel it.
     private var loginTask: Task<Void, Never>?
 
-    init(bridge: any HostBridge = Bridge(socketPath: Bridge.defaultSocket()),
-         manualReturn: Bool = UserDefaults.standard.bool(forKey: "ManualReturn"),
-         verifiedFilter: Bool = UserDefaults.standard.bool(forKey: "VerifiedInputFilter"),
-         post: @escaping @MainActor (UNNotificationRequest) -> Void = Notifier.post,
-         control: any DaemonLauncher = DaemonControl(),
-         confirm: (@MainActor (Confirmation) async -> Bool)? = nil,
-         sessionStopLimit: Double = 5,
-         login: any LoginService = AgentLoginService(),
-         startedByAgent: Bool = LoginItem.startedByAgent(),
-         sourceInstalled: @escaping () -> Bool = { LoginItem.sourceInstalled() },
-         bundled: Bool = LoginItem.bundled(),
-         exitApp: @escaping @MainActor () -> Void = { exit(0) },
-         handOverRetry: Double = 15) {
+    init(
+        bridge: any HostBridge = Bridge(socketPath: Bridge.defaultSocket()),
+        manualReturn: Bool = UserDefaults.standard.bool(forKey: "ManualReturn"),
+        verifiedFilter: Bool = UserDefaults.standard.bool(forKey: "VerifiedInputFilter"),
+        post: @escaping @MainActor (UNNotificationRequest) -> Void = Notifier.post,
+        control: any DaemonLauncher = DaemonControl(),
+        confirm: (@MainActor (Confirmation) async -> Bool)? = nil,
+        sessionStopLimit: Double = 5,
+        login: any LoginService = AgentLoginService(),
+        startedByAgent: Bool = LoginItem.startedByAgent(),
+        sourceInstalled: @escaping () -> Bool = { LoginItem.sourceInstalled() },
+        bundled: Bool = LoginItem.bundled(),
+        exitApp: @escaping @MainActor () -> Void = { exit(0) },
+        handOverRetry: Double = 15
+    ) {
         self.login = login
         self.handOverRetry = handOverRetry
         self.startedByAgent = startedByAgent
@@ -141,21 +144,29 @@ import SwiftUI
     func start() {
         guard timer == nil else { return }
         let center = NotificationCenter.default
-        menuObservers.append(center.addObserver(forName: NSMenu.didBeginTrackingNotification,
-                                                object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.menuOpened() }
-        })
-        menuObservers.append(center.addObserver(forName: NSMenu.didEndTrackingNotification,
-                                                object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.menuClosed() }
-        })
+        menuObservers.append(
+            center.addObserver(
+                forName: NSMenu.didBeginTrackingNotification,
+                object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.menuOpened() }
+            })
+        menuObservers.append(
+            center.addObserver(
+                forName: NSMenu.didEndTrackingNotification,
+                object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.menuClosed() }
+            })
         // Logout can start while a Restart or Quit alert is up. Its quit
         // event may wait for the alert, so close it now rather than block
         // logout. Only the alert is closed: logout can still be cancelled.
-        menuObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.willPowerOffNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.closePrompt() }
-        })
+        menuObservers.append(
+            NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.willPowerOffNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.closePrompt() }
+            })
         startDaemon(.starting)
         refreshLoginItem()
         let heartbeat = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
@@ -198,8 +209,10 @@ import SwiftUI
         let bridge = self.bridge
         return Task {
             do {
-                let (state, jobs, version) = try await Blocking.run { () throws -> (HostStatus, [DaemonJob], DaemonVersion?) in
-                    let state = sense
+                let (state, jobs, version) = try await Blocking.run {
+                    () throws -> (HostStatus, [DaemonJob], DaemonVersion?) in
+                    let state =
+                        sense
                         ? try bridge.request("/host/snapshot", snapshot: Sensors.snapshot(eventTapReady: tapReady))
                         : try bridge.request("/host/status", snapshot: nil)
                     return (state, try bridge.jobs(), needVersion ? try bridge.version() : nil)
@@ -383,8 +396,9 @@ import SwiftUI
                 self?.action("not-now", job: jobID)
             }
         }
-        countdownPanel?.show(seconds: current.countdownJob == id ? current.countdownSeconds : nil,
-                             error: actionError)
+        countdownPanel?.show(
+            seconds: current.countdownJob == id ? current.countdownSeconds : nil,
+            error: actionError)
     }
 
     func dismissActionError() {
@@ -411,7 +425,8 @@ import SwiftUI
                 // status no longer shows the job running.
             } catch {
                 if name == "return", pendingReturn == job { pendingReturn = "" }
-                actionError = "\(name == "not-now" ? "Not now" : name == "take-back" ? "Take back" : "Host action") failed: \(error)"
+                actionError =
+                    "\(name == "not-now" ? "Not now" : name == "take-back" ? "Take back" : "Host action") failed: \(error)"
                 if let liveStatus { updateCountdownPanel(liveStatus) }
             }
         }
@@ -451,9 +466,11 @@ extension HostModel {
             // A session quit that arrived meanwhile closed the alert.
             return sessionEnding
         case .failed(let error):
-            let quit = await ask(Confirmation(message: "The daemon didn't stop",
-                                        detail: "\(error)\nQuitting Offscreen leaves it running.",
-                                        confirm: "Quit Anyway", decline: "Don't Quit"))
+            let quit = await ask(
+                Confirmation(
+                    message: "The daemon didn't stop",
+                    detail: "\(error)\nQuitting Offscreen leaves it running.",
+                    confirm: "Quit Anyway", decline: "Don't Quit"))
             if !quit { finishControl() }
             return quit || sessionEnding
         }
@@ -505,9 +522,14 @@ extension HostModel {
         let bridge = self.bridge
         let active = ((try? await Blocking.run { try bridge.jobs() }) ?? []).filter(\.active)
         if !active.isEmpty {
-            let detail = "\(verb == "Quit" ? "Quitting Offscreen" : "Restarting") stops the daemon. Cancelled jobs stop and their VM clones are deleted."
-            guard await ask(Confirmation(message: QuitPrompt.message(verb: verb, count: active.count), detail: detail,
-                                   confirm: "\(verb) and Cancel Jobs", decline: "Don't \(verb)")) else {
+            let detail =
+                "\(verb == "Quit" ? "Quitting Offscreen" : "Restarting") stops the daemon. Cancelled jobs stop and their VM clones are deleted."
+            guard
+                await ask(
+                    Confirmation(
+                        message: QuitPrompt.message(verb: verb, count: active.count), detail: detail,
+                        confirm: "\(verb) and Cancel Jobs", decline: "Don't \(verb)"))
+            else {
                 finishControl()
                 return .declined
             }
@@ -536,8 +558,12 @@ extension HostModel {
             if !failures.isEmpty { break }
         }
         if !failures.isEmpty {
-            guard await ask(Confirmation(message: "Some jobs couldn't be cancelled", detail: failures.joined(separator: "\n"),
-                                   confirm: "\(verb) Anyway", decline: "Don't \(verb)")) else {
+            guard
+                await ask(
+                    Confirmation(
+                        message: "Some jobs couldn't be cancelled", detail: failures.joined(separator: "\n"),
+                        confirm: "\(verb) Anyway", decline: "Don't \(verb)"))
+            else {
                 finishControl()
                 return .declined
             }
@@ -607,7 +633,10 @@ extension HostModel {
         // Turned off, or quitting, in the meantime: those cancel loginTask.
         guard !Task.isCancelled else { return }
         // A restart in progress: say so rather than drop the retry silently.
-        guard !controlling else { actionError = message; return }
+        guard !controlling else {
+            actionError = message
+            return
+        }
         guard login.status == .enabled, !handingOver else { return }
         switch await runHandOver(reregister: true) {
         case .running: exitApp()
@@ -667,11 +696,16 @@ extension HostModel {
                 refreshLoginItem()
             }
         }
-        let detail = "This copy of Offscreen was started at login, so turning it off quits it and stops the daemon. "
+        let detail =
+            "This copy of Offscreen was started at login, so turning it off quits it and stops the daemon. "
             + "Open Offscreen again to keep using it."
         return Task {
-            guard await ask(Confirmation(message: "Turn off Start at Login and quit Offscreen?", detail: detail,
-                                         confirm: "Turn Off and Quit", decline: "Cancel")) else { return }
+            guard
+                await ask(
+                    Confirmation(
+                        message: "Turn off Start at Login and quit Offscreen?", detail: detail,
+                        confirm: "Turn Off and Quit", decline: "Cancel"))
+            else { return }
             switch await shutDown(verb: "Quit") {
             case .declined:
                 return
@@ -753,18 +787,21 @@ extension HostModel {
     private func installTap() {
         let kinds: [CGEventType] = [.keyDown, .mouseMoved, .leftMouseDown, .rightMouseDown, .scrollWheel]
         let mask = kinds.reduce(CGEventMask(0)) { $0 | (CGEventMask(1) << $1.rawValue) }
-        guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
-                                          options: .listenOnly, eventsOfInterest: mask,
-                                          callback: { _, type, event, refcon in
-            guard let refcon else { return Unmanaged.passUnretained(event) }
-            let model = Unmanaged<HostModel>.fromOpaque(refcon).takeUnretainedValue()
-            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-                if let tap = model.eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
-                return Unmanaged.passUnretained(event)
-            }
-            model.observed(type: type, event: event)
-            return Unmanaged.passUnretained(event)
-        }, userInfo: Unmanaged.passUnretained(self).toOpaque()) else { return }
+        guard
+            let tap = CGEvent.tapCreate(
+                tap: .cgSessionEventTap, place: .headInsertEventTap,
+                options: .listenOnly, eventsOfInterest: mask,
+                callback: { _, type, event, refcon in
+                    guard let refcon else { return Unmanaged.passUnretained(event) }
+                    let model = Unmanaged<HostModel>.fromOpaque(refcon).takeUnretainedValue()
+                    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                        if let tap = model.eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
+                        return Unmanaged.passUnretained(event)
+                    }
+                    model.observed(type: type, event: event)
+                    return Unmanaged.passUnretained(event)
+                }, userInfo: Unmanaged.passUnretained(self).toOpaque())
+        else { return }
         eventTap = tap
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         tapSource = source
@@ -780,7 +817,10 @@ extension HostModel {
         }
         let pid = event.getIntegerValueField(.eventSourceUnixProcessID)
         let state = event.getIntegerValueField(.eventSourceStateID)
-        if probe { print("type=\(type.rawValue) pid=\(pid) sourceState=\(state)"); fflush(stdout) }
+        if probe {
+            print("type=\(type.rawValue) pid=\(pid) sourceState=\(state)")
+            fflush(stdout)
+        }
         physicalInput(pid: pid)
     }
 
@@ -790,13 +830,17 @@ extension HostModel {
     func physicalInput(pid: Int64) -> Task<Void, Never>? {
         // Candidate only: physical-vs-injected behavior requires the human probe.
         // Never consider injected events (which reset HIDIdleTime) a return.
-        let running: String? = ["preparing", "running", "collecting"].contains(liveStatus?.running?.state ?? "")
+        let running: String? =
+            ["preparing", "running", "collecting"].contains(liveStatus?.running?.state ?? "")
             ? liveStatus?.running?.id : nil
         let returning = liveStatus?.returnJob != nil || pendingReturn == running
-        guard let id = InputFilter.candidatePhysical(pid: pid, runningJob: running,
-                                                     alreadyReturning: returning,
-                                                     manualReturn: manualReturn,
-                                                     verified: verifiedFilter) else { return nil }
+        guard
+            let id = InputFilter.candidatePhysical(
+                pid: pid, runningJob: running,
+                alreadyReturning: returning,
+                manualReturn: manualReturn,
+                verified: verifiedFilter)
+        else { return nil }
         pendingReturn = id
         return action("return", job: id, automatic: true)
     }
@@ -833,7 +877,8 @@ enum HostSensing {
         // starts. AppKit doesn't ask again while a reply is pending, so end
         // the session now rather than hold up logout.
         powerOffObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.willPowerOffNotification, object: nil, queue: .main) { [weak self] _ in
+            forName: NSWorkspace.willPowerOffNotification, object: nil, queue: .main
+        ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.replyPending else { return }
                 Task {
@@ -898,9 +943,12 @@ enum HostSensing {
     private static func handOverToLoginJob() -> String? {
         guard !CommandLine.arguments.contains("--probe-input") else { return nil }
         let login = AgentLoginService()
-        guard LoginItem.shouldHandOver(status: login.status, startedByAgent: LoginItem.startedByAgent(),
-                                       sourceInstall: LoginItem.sourceInstalled(),
-                                       bundled: LoginItem.bundled()) else { return nil }
+        guard
+            LoginItem.shouldHandOver(
+                status: login.status, startedByAgent: LoginItem.startedByAgent(),
+                sourceInstall: LoginItem.sourceInstalled(),
+                bundled: LoginItem.bundled())
+        else { return nil }
         switch LoginItem.handOver(login, reregister: true) {
         case .running: exit(0)
         case .needsApproval: return nil
@@ -923,7 +971,10 @@ enum HostSensing {
             .map { SingleInstance.Instance(pid: $0.processIdentifier, launched: $0.launchDate) }
         guard SingleInstance.yields(me, to: others) else { return }
         if LoginItem.startedByAgent(),
-           SingleInstance.waitForExit(others.map(\.pid).filter { $0 != me.pid }, within: 10) { return }
+            SingleInstance.waitForExit(others.map(\.pid).filter { $0 != me.pid }, within: 10)
+        {
+            return
+        }
         exit(0)
     }
 
@@ -974,9 +1025,13 @@ enum HostSensing {
             Divider()
             Button("Restart Daemon") { model.restart() }
                 .disabled(model.daemon.busy || model.controlling || model.handingOver)
-            Toggle("Start at Login", isOn: Binding(get: { model.loginItem.isOn },
-                                                    set: { model.setStartAtLogin($0) }))
-                .disabled(!model.loginItem.enabled || model.controlling || model.handingOver)
+            Toggle(
+                "Start at Login",
+                isOn: Binding(
+                    get: { model.loginItem.isOn },
+                    set: { model.setStartAtLogin($0) })
+            )
+            .disabled(!model.loginItem.enabled || model.controlling || model.handingOver)
             if let note = model.loginItem.note { Text(note) }
             if model.loginItem.approve {
                 Button("Approve Start at Login…") { model.approveLoginItem() }
