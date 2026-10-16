@@ -7,8 +7,11 @@ import (
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -36,6 +39,10 @@ var (
 
 // FailureLines is how many trailing output lines a failed step reports.
 const FailureLines = 20
+
+// KeepBuildLogs is how many build logs, counting the current build's,
+// stay in [LogDir]; each build deletes older ones once its own log exists.
+const KeepBuildLogs = 10
 
 // StepError is a failed build step. Its message is one line; the step's
 // last output lines and the path of the full build log are separate fields
@@ -105,6 +112,56 @@ func Build(ctx context.Context, path string, refresh bool, sink progress.Sink) (
 // at configPath.
 func LogDir(configPath string) string {
 	return filepath.Join(filepath.Dir(configPath), "image-builds")
+}
+
+// trimBuildLogs deletes the oldest build logs in dir, by modification time,
+// so at most KeepBuildLogs remain. Only offscreen-build-*.log files count; a
+// missing dir has nothing to trim.
+func trimBuildLogs(dir string) error {
+	keep := KeepBuildLogs
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	type buildLog struct {
+		name    string
+		modTime time.Time
+	}
+	var logs []buildLog
+	for _, entry := range entries {
+		name := entry.Name()
+		if !entry.Type().IsRegular() || !strings.HasPrefix(name, "offscreen-build-") || !strings.HasSuffix(name, ".log") {
+			continue
+		}
+		info, err := entry.Info()
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		logs = append(logs, buildLog{name: name, modTime: info.ModTime()})
+	}
+	if len(logs) <= keep {
+		return nil
+	}
+	// Newest first; build IDs are random, so names only break ties.
+	slices.SortFunc(logs, func(a, b buildLog) int {
+		if c := b.modTime.Compare(a.modTime); c != 0 {
+			return c
+		}
+		return strings.Compare(b.name, a.name)
+	})
+	var errs []error
+	for _, old := range logs[keep:] {
+		if err := os.Remove(filepath.Join(dir, old.name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // buildRun is one build in progress: its step numbering and log file.
@@ -179,6 +236,9 @@ func (b builder) build(ctx context.Context, path string, cfg config.Config, refr
 		return "", fmt.Errorf("create image build log: %w", err)
 	}
 	defer func() { _ = logFile.Close() }()
+	if err := trimBuildLogs(logDir); err != nil {
+		slog.Warn("trim old image build logs", "dir", logDir, "err", err)
+	}
 	// Steps: pull, clone, boot, wait, display, check, automation, one per
 	// setup script, desktop cleanup, seal.
 	run := &buildRun{steps: progress.NewSteps(sink, 9+len(cfg.Image.Setup)), log: logFile, logPath: logPath}

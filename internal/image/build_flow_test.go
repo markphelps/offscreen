@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -189,6 +190,32 @@ func TestBuildReportsStepsInOrderAndRecordsImage(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(buildLog), "pulling base:latest\n100%\n", "pull output belongs in the log")
 	require.Contains(t, string(buildLog), "first setup\n")
+}
+
+func TestBuildTrimsOldLogs(t *testing.T) {
+	path, cfg := buildFixture(t)
+	dir := LogDir(path)
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	old := time.Now().Add(-time.Hour)
+	for i := range KeepBuildLogs + 2 {
+		log := filepath.Join(dir, fmt.Sprintf("offscreen-build-old%02d.log", i))
+		require.NoError(t, os.WriteFile(log, []byte("old"), 0o600))
+		require.NoError(t, os.Chtimes(log, old, old))
+	}
+	client, _ := scriptedTart(t, `[{"Name":"base:latest"}]`)
+	_, err := newTestBuilder(client, &fakeShell{}, &recorder{}).build(context.Background(), path, cfg, false)
+	require.NoError(t, err)
+
+	logs, err := filepath.Glob(filepath.Join(dir, "offscreen-build-*.log"))
+	require.NoError(t, err)
+	require.Len(t, logs, KeepBuildLogs)
+	var fresh int
+	for _, log := range logs {
+		if !strings.HasPrefix(filepath.Base(log), "offscreen-build-old") {
+			fresh++
+		}
+	}
+	require.Equal(t, 1, fresh, "the new build's log is kept")
 }
 
 func TestBuildSkipsPullWhenBaseIsPresent(t *testing.T) {

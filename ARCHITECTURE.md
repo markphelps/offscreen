@@ -40,7 +40,7 @@ flowchart LR
     app -- "launchctl kickstart / SIGTERM" --> daemon
 ```
 
-`offscreen image build` runs in the CLI, not the daemon. It clones the base image with Tart, checks the guest's GUI session, and records the result as `current_image` in the user config. `internal/image` reports each step through an `internal/progress` sink and streams command output to the renderer, a build log beside the config, and a bounded failure tail. Older images stay in Tart until `offscreen image prune` deletes them. It only selects names `image build` produces, always keeps `current_image` (and refuses if Tart doesn't list it), skips running images, and refuses to delete while a VM job is past the queue (it proceeds if the daemon is not running). A lock file beside the config serializes prune against `image build` publishing a new image.
+`offscreen image build` runs in the CLI, not the daemon. It clones the base image with Tart, checks the guest's GUI session, and records the result as `current_image` in the user config. `internal/image` reports each step through an `internal/progress` sink and streams command output to the renderer, a build log beside the config (each build trims the directory to the 10 newest logs), and a bounded failure tail. Older images stay in Tart until `offscreen image prune` deletes them. It only selects names `image build` produces, always keeps `current_image` (and refuses if Tart doesn't list it), skips running images, and refuses to delete while a VM job is past the queue (it proceeds if the daemon is not running). A lock file beside the config serializes prune against `image build` publishing a new image.
 
 ## Job lifecycle (VM lane)
 

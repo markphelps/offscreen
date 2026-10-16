@@ -52,7 +52,7 @@ The global `--progress` flag, or `OFFSCREEN_PROGRESS` when the flag is not given
 
 Color is off when `NO_COLOR` is set, `TERM=dumb`, or stderr is not a terminal. Tart has no supported progress output for `tart pull`, so the pull step shows only its timer; Tart's output goes to the build log.
 
-Every build writes its full log, including Tart's pull output and all guest command output, to `image-builds/offscreen-build-<id>.log` in the config file's directory (`~/Library/Application Support/offscreen/` by default, or beside `OFFSCREEN_CONFIG`). When a step fails, stderr shows that step's last 20 output lines, a one-line error, and the log path. Logs are kept after the build; delete old ones by hand.
+Every build writes its full log, including Tart's pull output and all guest command output, to `image-builds/offscreen-build-<id>.log` in the config file's directory (`~/Library/Application Support/offscreen/` by default, or beside `OFFSCREEN_CONFIG`). When a step fails, stderr shows that step's last 20 output lines, a one-line error, and the log path. Offscreen keeps the 10 newest build logs, counting the current one: each build deletes older `offscreen-build-*.log` files when it starts and leaves other files in the directory alone.
 
 ## Run phases
 
