@@ -3,6 +3,9 @@ go = "1.27.0"
 golangci-lint = "2.13.2"
 shellcheck = "0.11.0"
 goreleaser = "2.17.1"
+# swift-format ships no release binaries, so mise builds it from source with the
+# local Swift toolchain (a few minutes, once). macOS only, like the app.
+"spm:swiftlang/swift-format" = { version = "604.0.0", os = ["macos"] }
 
 # Tasks are named <verb> or <verb>:<part>. Each bare verb runs all its parts.
 
@@ -40,7 +43,7 @@ run = "swift build --package-path app && swift test --package-path app"
 
 [tasks.lint]
 description = "Run all linters"
-run = [{ task = "lint:go" }, { task = "lint:sh" }]
+run = [{ task = "lint:go" }, { task = "lint:sh" }, { task = "lint:app" }]
 
 [tasks."lint:go"]
 description = "Lint Go code"
@@ -50,9 +53,21 @@ run = "golangci-lint run ./..."
 description = "ShellCheck every tracked shell script"
 run = "git ls-files -z '*.sh' | xargs -0 shellcheck"
 
+[tasks."lint:app"]
+description = "Check the Swift menu bar app's formatting and style with swift-format"
+run = "swift-format lint --strict --recursive --parallel app/Package.swift app/probe.swift app/Sources app/Tests"
+
 [tasks.fmt]
+description = "Format all code (edits files)"
+run = [{ task = "fmt:go" }, { task = "fmt:app" }]
+
+[tasks."fmt:go"]
 description = "Format Go code and apply modern Go idioms (edits files)"
 run = ["golangci-lint fmt ./...", "golangci-lint run --default=none -E modernize --fix ./..."]
+
+[tasks."fmt:app"]
+description = "Format the Swift menu bar app with swift-format (edits files)"
+run = "swift-format format --in-place --recursive --parallel app/Package.swift app/probe.swift app/Sources app/Tests"
 
 [tasks.check]
 description = "Everything to run before committing: lint, test, build"

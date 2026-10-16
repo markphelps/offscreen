@@ -8,7 +8,7 @@ Offscreen queues GUI and UI-test jobs from agents and scripts, then runs them in
 - Before committing, run `mise run fmt` (it edits files, so check the diff) and then `mise run check` (lint, test, build).
 - Name tasks `<verb>` or `<verb>:<part>`, where the part is `go`, `app` or `sh`. A bare verb runs all its parts.
 - Go tests need a Mac because `internal/run`'s guardian is darwin-only. Lint works anywhere with `GOOS=darwin`.
-- `mise run test:app` needs Swift 6.2+.
+- `mise run test:app` needs Swift 6.2+. `lint:app`/`fmt:app` use the mise-pinned swift-format (built from source on macOS) and `app/.swift-format`; CI runs `lint:app` in the macOS job, not the Linux lint job.
 
 ## Map
 
